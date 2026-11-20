@@ -26,6 +26,20 @@ async function verifyIdToken(idToken, channelId) {
   return body;
 }
 
+/**
+ * 用 LIFF 的 Access Token 取得使用者的名稱與頭像。
+ * 會先確認這個 Token 是發給我們的 LINE Login channel，避免被冒用。
+ */
+async function getProfileByAccessToken(accessToken, channelId) {
+  const v = await fetch(`https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`);
+  const vb = await v.json().catch(() => ({}));
+  if (!v.ok || String(vb.client_id) !== String(channelId)) throw new Error("Access Token 驗證失敗");
+  const res = await fetch("https://api.line.me/v2/profile", { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error("無法取得 LINE 個人資料");
+  const p = await res.json();
+  return { userId: p.userId, displayName: p.displayName || "", pictureUrl: p.pictureUrl || "" };
+}
+
 async function reply(replyToken, messages, accessToken) {
   const res = await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
@@ -59,4 +73,4 @@ async function getGroupSummary(groupId, accessToken) {
   return { name: g.groupName || "", pictureUrl: g.pictureUrl || "" };
 }
 
-module.exports = { verifySignature, verifyIdToken, reply, getProfile, getGroupSummary };
+module.exports = { verifySignature, verifyIdToken, getProfileByAccessToken, reply, getProfile, getGroupSummary };

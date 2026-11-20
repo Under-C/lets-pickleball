@@ -154,6 +154,8 @@ async function main() {
   }
   S.loggedIn = true;
   S.uid = auth.currentUser.uid;
+  // 背景同步 LINE 名稱與頭像（不影響畫面載入）
+  call("refreshProfile", { accessToken: liff.getAccessToken() }).catch((e) => console.warn("refreshProfile", e.message));
 
   // 從群組字卡點進來（網址帶 g=群組ID）：加入該群組並預設選它
   const url = new URL(location.href);
@@ -248,7 +250,7 @@ async function firebaseLogin() {
   if (current) await signOut(auth);
 
   try {
-    const { token } = await call("lineLogin", { idToken: liff.getIDToken() });
+    const { token } = await call("lineLogin", { idToken: liff.getIDToken(), accessToken: liff.getAccessToken() });
     await signInWithCustomToken(auth, token);
     try { sessionStorage.removeItem("relogin"); } catch {}
   } catch (e) {

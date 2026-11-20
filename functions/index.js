@@ -86,9 +86,39 @@ exports.lineLogin = onCall(async (req) => {
     throw new HttpsError("unauthenticated", "LINE 登入驗證失敗，請重新登入", { reason: e.lineError || e.message });
   }
   const uid = profile.sub;
-  const user = await core.upsertUser({ uid, displayName: profile.name, pictureUrl: profile.picture || "" });
+  let displayName = profile.name || "";
+  let pictureUrl = profile.picture || "";
+  // ID Token 裡沒有名稱時，改用 Access Token 向 LINE 查詢
+  if ((!displayName || !pictureUrl) && req.data.accessToken) {
+    try {
+      const p = await line.getProfileByAccessToken(String(req.data.accessToken), LINE_LOGIN_CHANNEL_ID.value());
+      if (p.userId === uid) {
+        displayName = displayName || p.displayName;
+        pictureUrl = pictureUrl || p.pictureUrl;
+      }
+    } catch (e) {
+      console.warn("getProfileByAccessToken failed", e.message);
+    }
+  }
+  const user = await core.upsertUser({ uid, displayName, pictureUrl });
   const token = await getAuth().createCustomToken(uid);
   return { token, role: user.role };
+});
+
+// 每次打開網站時同步 LINE 名稱與頭像（使用者改了 LINE 名稱也會更新）
+exports.refreshProfile = onCall(async (req) => {
+  const uid = requireAuth(req);
+  const accessToken = req.data && req.data.accessToken;
+  if (!accessToken) throw new HttpsError("invalid-argument", "缺少 accessToken");
+  let p;
+  try {
+    p = await line.getProfileByAccessToken(String(accessToken), LINE_LOGIN_CHANNEL_ID.value());
+  } catch (e) {
+    throw new HttpsError("unauthenticated", e.message);
+  }
+  if (p.userId !== uid) throw new HttpsError("permission-denied", "LINE 帳號不符");
+  await core.upsertUser({ uid, displayName: p.displayName, pictureUrl: p.pictureUrl });
+  return { displayName: p.displayName };
 });
 
 // 從群組字卡點進網站時，把使用者加入該群組
