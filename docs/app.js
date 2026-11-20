@@ -31,7 +31,7 @@ const S = {
   userQ: "",
   usersUnsub: null,
   groups: [],            // 看得到的群組
-  selGroup: "all",       // 目前選擇的群組
+  selGroup: (() => { try { return localStorage.getItem("selGroup") || ""; } catch { return ""; } })(), // 目前選擇的群組
   dataMode: "",          // super = 讀全部；member = 只讀自己的群組
   unsubs: [],            // 資料監聽（切換模式時取消）
   eventsByGroup: {},     // 一般成員：每個群組各自的揪團
@@ -115,7 +115,8 @@ const isAdmin = () => isSuper() || adminGroups().length > 0; // 可以進入管�
 const findGroup = (gid) => S.groups.find((g) => g.id === gid);
 const groupName = (gid) => findGroup(gid)?.name || "（未分組）";
 const isBlockedIn = (gid) => (findGroup(gid)?.blocked || []).includes(S.uid);
-const visibleEvents = () => (S.selGroup === "all" ? S.events : S.events.filter((e) => e.groupId === S.selGroup));
+// 只有一個群組時顯示全部；多個群組時依 Header 選單篩選
+const visibleEvents = () => (S.selGroup === "all" || activeGroups().length < 2 ? S.events : S.events.filter((e) => e.groupId === S.selGroup));
 const sortGroups = (list) => list.sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-Hant"));
 
 let toastTimer;
@@ -182,7 +183,7 @@ async function main() {
   const url = new URL(location.href);
   const linkG = url.searchParams.get("g");
   if (linkG) {
-    try { await call("linkGroup", { groupId: linkG }); S.selGroup = linkG; } catch {}
+    try { await call("linkGroup", { groupId: linkG }); S.selGroup = linkG; try { localStorage.setItem("selGroup", linkG); } catch {} } catch {}
     url.searchParams.delete("g");
     history.replaceState(null, "", url);
   }
@@ -251,7 +252,7 @@ function setupData() {
       for (const gid of Object.keys(S.eventUnsubs)) {
         if (!ids.has(gid)) { S.eventUnsubs[gid](); delete S.eventUnsubs[gid]; delete S.eventsByGroup[gid]; }
       }
-      if (S.selGroup !== "all" && !ids.has(S.selGroup)) S.selGroup = "all";
+      if (S.selGroup && S.selGroup !== "all" && !ids.has(S.selGroup)) S.selGroup = "";
       mergeEvents();
       renderMe();
     }, onErr));
@@ -300,6 +301,7 @@ function renderMe() {
 function render() {
   if (S.view === "admin" && S.loggedIn && S.me && S.groupsLoaded && !isAdmin()) S.view = "home";
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === S.view));
+  renderGroupSel();
 
   // 沒登入時，除了教學頁以外都顯示歡迎頁
   const view = !S.loggedIn && S.view !== "help" ? "landing" : S.view;
@@ -336,10 +338,28 @@ function groupBar(list = activeGroups()) {
   const chip = (gid, label) => `<button class="small chip ${S.selGroup === gid ? "active" : ""}" data-act="selGroup" data-gid="${esc(gid)}">${esc(label)}</button>`;
   return `<div class="chips">${chip("all", "全部群組")}${list.map((g) => chip(g.id, g.name)).join("")}</div>`;
 }
-function fillGroupBar(list) {
-  const el = document.getElementById("groupBar");
-  if (el) el.innerHTML = groupBar(list);
+// （舊的群組切換列已改成 Header 的下拉選單）
+function fillGroupBar() {}
+
+// Header 的群組選單：在兩個以上群組時顯示；行事曆固定顯示全部群組，所以隱藏
+const $groupSel = document.getElementById("groupSel");
+function renderGroupSel() {
+  const groups = activeGroups();
+  // 預設選第一個群組（網址帶的群組、上次選的群組優先）
+  if (groups.length && S.selGroup !== "all" && !groups.some((g) => g.id === S.selGroup)) S.selGroup = groups[0].id;
+  const show = S.loggedIn && groups.length >= 2 && !["calendar", "help"].includes(S.view);
+  $groupSel.classList.toggle("hidden", !show);
+  if (!show) return;
+  const opts = groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join("")
+    + `<option value="all">全部群組</option>`;
+  if ($groupSel.dataset.opts !== opts) { $groupSel.innerHTML = opts; $groupSel.dataset.opts = opts; }
+  $groupSel.value = S.selGroup;
 }
+$groupSel.addEventListener("change", () => {
+  S.selGroup = $groupSel.value;
+  try { localStorage.setItem("selGroup", S.selGroup); } catch {}
+  render();
+});
 
 function eventCard(ev) {
   const { main, wait } = split(ev);
@@ -357,9 +377,11 @@ function eventCard(ev) {
 
   return `
   <div class="card">
-    <div class="card-head"><span class="ttl"><img class="pb-ico" src="pickleball.svg" alt="">${esc(ev.title || "匹克球揪團")}</span>${tag}</div>
+    <div class="card-head">
+      <div class="head-row"><span class="ttl"><img class="pb-ico" src="pickleball.svg" alt="">${esc(ev.title || "匹克球揪團")}</span>${tag}</div>
+      <div class="card-group">👥 ${esc(groupName(ev.groupId))}</div>
+    </div>
     <div class="card-body">
-      ${S.groups.length > 1 ? `<div class="muted">👥 ${esc(groupName(ev.groupId))}</div>` : ""}
       <div class="loc">📍 ${esc(ev.location)}</div>
       <div>📅 ${fmtRange(ev.start, ev.end)}</div>
       ${ev.courts ? `<div>🏟️ 場地：${esc(ev.courts)}</div>` : ""}
@@ -413,6 +435,7 @@ const SHELL = {
         <button class="small" data-act="calNext">下個月 ›</button>
       </div>
       <div id="groupBar"></div>
+      <p class="muted cal-legend">顯示你所有群組的揪團　<i class="lg reg"></i> 你已報名　<i class="lg"></i> 其他場次</p>
       <div id="calGrid" class="cal-grid"></div>
       <h3 id="calDayTitle"></h3>
       <div id="calList" class="cards"></div>`;
@@ -520,9 +543,10 @@ const UPDATE = {
   calendar() {
     const m = S.calMonth;
     document.getElementById("calTitle").textContent = `${m.getFullYear()} 年 ${m.getMonth() + 1} 月`;
-    fillGroupBar();
+    // 行事曆固定顯示所有群組的揪團，避免報名日期衝突
     const byDay = {};
-    for (const e of visibleEvents()) (byDay[dayKey(e.start)] ||= []).push(e);
+    for (const e of S.events) (byDay[dayKey(e.start)] ||= []).push(e);
+    const isMine = (e) => (e.entries || []).some((x) => x.uid === S.uid);
 
     const first = new Date(m.getFullYear(), m.getMonth(), 1);
     const startDate = new Date(first);
@@ -533,9 +557,11 @@ const UPDATE = {
       const d = new Date(startDate);
       d.setDate(startDate.getDate() + i);
       const k = dayKey(d.getTime());
-      const n = (byDay[k] || []).length;
-      const cls = ["cal-day", d.getMonth() !== m.getMonth() ? "other" : "", k === today ? "today" : "", k === S.calSel ? "sel" : ""].join(" ");
-      html += `<div class="${cls}" data-act="calDay" data-day="${k}">${d.getDate()}<div class="marks">${"<i></i>".repeat(Math.min(n, 3))}</div></div>`;
+      const dayEvents = byDay[k] || [];
+      const marks = dayEvents.slice(0, 3).map((e) => `<i class="${isMine(e) ? "reg" : ""}"></i>`).join("");
+      const cls = ["cal-day", d.getMonth() !== m.getMonth() ? "other" : "", k === today ? "today" : "", k === S.calSel ? "sel" : "",
+        dayEvents.some(isMine) ? "has-mine" : ""].join(" ");
+      html += `<div class="${cls}" data-act="calDay" data-day="${k}">${d.getDate()}<div class="marks">${marks}</div></div>`;
     }
     document.getElementById("calGrid").innerHTML = html;
 
@@ -543,7 +569,11 @@ const UPDATE = {
     const sel = new Date(y, mo - 1, da);
     document.getElementById("calDayTitle").textContent = `${mo}/${da}（${WD[sel.getDay()]}）的揪團`;
     const list = byDay[S.calSel] || [];
-    document.getElementById("calList").innerHTML = list.length ? list.map(eventCard).join("") : `<div class="empty">這天沒有揪團</div>`;
+    // 同一天你報名的揪團時間重疊時提醒
+    const mine = list.filter(isMine);
+    const clash = mine.some((a, i) => mine.some((b, j) => i < j && a.start < b.end && b.start < a.end));
+    const warn = clash ? `<div class="panel" style="color:var(--red)">⚠️ 這天你報名的揪團時間有重疊，請確認是否都能參加。</div>` : "";
+    document.getElementById("calList").innerHTML = warn + (list.length ? list.map(eventCard).join("") : `<div class="empty">這天沒有揪團</div>`);
   },
   my() {
     const now = Date.now();

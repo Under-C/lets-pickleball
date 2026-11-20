@@ -431,7 +431,7 @@ async function handleLineEvent(ev) {
     if (LIST_KEYWORDS.includes(msg)) {
       let list;
       if (gid) {
-        list = await core.upcomingEvents(gid, 5);
+        list = (await core.upcomingEvents(gid, 5)).map((e) => ({ ...e, groupName: group && group.name }));
       } else if (userId) {
         // 一對一聊天：顯示使用者所在所有群組的揪團，並標示群組名稱
         const groups = await core.groupsOfUser(userId);
@@ -511,7 +511,8 @@ async function handleLineEvent(ev) {
         text = `👋 ${name} 已取消報名`;
         if (result.promoted) text += `\n🎉 ${result.promoted.name} 由候補遞補為正取！`;
       }
-      await line.reply(ev.replyToken, [{ type: "text", text }, eventMessage(result.ev, liffId, text, iconUrl)], token);
+      const cardEv = { ...result.ev, groupName: eventGroup && eventGroup.name };
+      await line.reply(ev.replyToken, [{ type: "text", text }, eventMessage(cardEv, liffId, text, iconUrl)], token);
     } catch (e) {
       if (!(e instanceof core.AppError)) console.error(e);
       await sayText(`⚠️ ${name}：${e instanceof core.AppError ? e.message : "系統忙碌，請稍後再試"}`);

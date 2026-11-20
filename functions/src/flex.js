@@ -40,7 +40,6 @@ function eventBubble(ev, liffId, iconUrl) {
   if (cap > MAX_DOTS) dots.push(text(`+${cap - MAX_DOTS}`, { flex: 0, size: "sm", color: GRAY, gravity: "center", wrap: false }));
 
   const body = [
-    ...(ev.groupName ? [text(`👥 ${ev.groupName}`, { size: "xs", color: GRAY })] : []),
     text(`📍 ${ev.location}`, { weight: "bold", size: "md" }),
     text(`📅 ${fmtRange(ev.startAt.toMillis(), ev.endAt.toMillis())}`, { size: "sm", color: "#555555" }),
   ];
@@ -75,14 +74,22 @@ function eventBubble(ev, liffId, iconUrl) {
     size: "kilo",
     header: {
       type: "box",
-      layout: "baseline",
-      spacing: "sm",
+      layout: "vertical",
+      spacing: "xs",
       backgroundColor: ev.status === "open" ? YELLOW : "#D9D4C7",
       paddingAll: "14px",
       contents: [
-        ...(iconUrl ? [{ type: "icon", url: iconUrl, size: "xl" }] : []),
-        text(ev.title || "匹克球揪團", { color: INK, weight: "bold", size: "md" }),
-        ...(ev.status === "open" ? [] : [text("🔒 已截止", { color: INK, size: "xs", flex: 0, wrap: false })]),
+        {
+          type: "box",
+          layout: "baseline",
+          spacing: "sm",
+          contents: [
+            ...(iconUrl ? [{ type: "icon", url: iconUrl, size: "xl" }] : []),
+            text(ev.title || "匹克球揪團", { color: INK, weight: "bold", size: "md" }),
+            ...(ev.status === "open" ? [] : [text("🔒 已截止", { color: INK, size: "xs", flex: 0, wrap: false })]),
+          ],
+        },
+        ...(ev.groupName ? [text(`👥 ${ev.groupName}`, { color: BROWN, size: "xs", weight: "bold" })] : []),
       ],
     },
     body: { type: "box", layout: "vertical", spacing: "sm", contents: body },
