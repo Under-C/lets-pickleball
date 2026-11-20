@@ -291,6 +291,25 @@ function render() {
   UPDATE[view]?.();
 }
 
+// Google 日曆新增活動連結（時間用 UTC，Google 會依使用者時區顯示）
+function gcalUrl(ev) {
+  const t = (ms) => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const details = [
+    ev.courts ? `場地：${ev.courts}` : "",
+    ev.note ? `備註：${ev.note}` : "",
+    ev.groupId ? `群組：${groupName(ev.groupId)}` : "",
+    `報名狀態與名單：https://liff.line.me/${LIFF_ID}`,
+  ].filter(Boolean).join("\n");
+  const p = new URLSearchParams({
+    action: "TEMPLATE",
+    text: `🏓 ${ev.title || "匹克球揪團"}`,
+    dates: `${t(ev.start)}/${t(ev.end)}`,
+    location: ev.location || "",
+    details,
+  });
+  return `https://calendar.google.com/calendar/render?${p.toString()}`;
+}
+
 // 群組切換列（只有一個群組時不顯示）
 function groupBar(list = activeGroups()) {
   if (list.length < 2) return "";
@@ -336,6 +355,7 @@ function eventCard(ev) {
     <div class="card-foot">
       <button data-act="cancel" data-id="${ev.id}" ${canCancel ? "" : "disabled"}>取消 -1</button>
       <button class="primary" data-act="join" data-id="${ev.id}" ${canJoin ? "" : "disabled"}>報名 +1</button>
+      ${pos && ev.end > now ? `<button class="gcal" data-act="gcal" data-id="${ev.id}">📅 加入 Google 日曆</button>` : ""}
     </div>
   </div>`;
 }
@@ -839,6 +859,14 @@ $app.addEventListener("click", async (e) => {
       });
       break;
     case "selGroup": S.selGroup = el.dataset.gid; render(); break;
+    case "gcal": {
+      if (!ev) return;
+      const url = gcalUrl(ev);
+      // 在 LINE 裡用外部瀏覽器開啟，手機有 Google 日曆 App 時會直接跳過去
+      if (liff.isInClient()) liff.openWindow({ url, external: true });
+      else window.open(url, "_blank", "noopener");
+      break;
+    }
     case "toggleGroupBlock": {
       const blocked = el.dataset.on !== "1";
       if (blocked && !confirm(`封鎖後「${el.dataset.name}」將無法在「${groupName(S.memberGroup)}」報名，確定嗎？`)) return;
