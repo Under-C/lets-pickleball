@@ -20,6 +20,7 @@ const LINE_CHANNEL_ACCESS_TOKEN = defineSecret("LINE_CHANNEL_ACCESS_TOKEN");
 // 一般設定（寫在 functions/.env）
 const LINE_LOGIN_CHANNEL_ID = defineString("LINE_LOGIN_CHANNEL_ID");
 const LIFF_ID = defineString("LIFF_ID");
+const SITE_URL = defineString("SITE_URL"); // 網站網址，字卡圖示從這裡讀取
 
 // Bot 關鍵字
 const LIST_KEYWORDS = ["揪團", "報名", "場次", "打球"];
@@ -216,15 +217,16 @@ exports.lineWebhook = onRequest(
 async function handleLineEvent(ev) {
   const token = LINE_CHANNEL_ACCESS_TOKEN.value();
   const liffId = LIFF_ID.value();
+  const iconUrl = `${SITE_URL.value().replace(/\/$/, "")}/pickleball.png`;
 
   if (ev.type === "message" && ev.message.type === "text") {
     const msg = ev.message.text.trim();
     if (LIST_KEYWORDS.includes(msg)) {
       const list = await core.upcomingEvents(5);
       if (!list.length) {
-        await line.reply(ev.replyToken, { type: "text", text: "目前沒有開放報名的揪團喔 🏓" }, token);
+        await line.reply(ev.replyToken, { type: "text", text: "目前沒有即將到來的揪團喔！" }, token);
       } else {
-        await line.reply(ev.replyToken, eventsCarousel(list, liffId), token);
+        await line.reply(ev.replyToken, eventsCarousel(list, liffId, iconUrl), token);
       }
     } else if (HELP_KEYWORDS.includes(msg)) {
       await line.reply(
@@ -297,7 +299,7 @@ async function handleLineEvent(ev) {
         text = `👋 ${name} 已取消報名`;
         if (result.promoted) text += `\n🎉 ${result.promoted.name} 由候補遞補為正取！`;
       }
-      await line.reply(ev.replyToken, [{ type: "text", text }, eventMessage(result.ev, liffId, text)], token);
+      await line.reply(ev.replyToken, [{ type: "text", text }, eventMessage(result.ev, liffId, text, iconUrl)], token);
     } catch (e) {
       if (!(e instanceof core.AppError)) console.error(e);
       await sayText(`⚠️ ${name}：${e instanceof core.AppError ? e.message : "系統忙碌，請稍後再試"}`);
@@ -306,5 +308,5 @@ async function handleLineEvent(ev) {
 }
 
 function eventLabel(ev) {
-  return `🏓 ${ev.title || "匹克球揪團"}｜${fmtRange(ev.startAt.toMillis(), ev.endAt.toMillis())}`;
+  return `${ev.title || "匹克球揪團"}｜${fmtRange(ev.startAt.toMillis(), ev.endAt.toMillis())}`;
 }

@@ -36,6 +36,27 @@ const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
 const $me = document.getElementById("me");
 
+// 原創吉祥物：拿著球拍的笑臉匹克球
+const MASCOT = `<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <g transform="translate(98 36) rotate(28)">
+    <rect x="-4.5" y="10" width="9" height="24" rx="4" fill="#F2B705" stroke="#C99400" stroke-width="2"/>
+    <rect x="-14" y="-27" width="28" height="37" rx="11" fill="#2F5D8C" stroke="#1F4268" stroke-width="3"/>
+    <rect x="-9" y="-22" width="7" height="15" rx="3.5" fill="#fff" opacity=".28"/>
+  </g>
+  <path d="M84 66 Q94 60 96 52" stroke="#8FB02E" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="52" cy="66" r="40" fill="#C9E84F" stroke="#8FB02E" stroke-width="3"/>
+  <g fill="#A9C93C">
+    <circle cx="34" cy="38" r="4"/><circle cx="54" cy="32" r="4"/><circle cx="72" cy="42" r="4"/>
+    <circle cx="22" cy="58" r="3.5"/><circle cx="84" cy="78" r="3.5"/><circle cx="30" cy="92" r="4"/>
+    <circle cx="52" cy="98" r="4"/><circle cx="72" cy="94" r="3.5"/>
+  </g>
+  <ellipse cx="41" cy="62" rx="4.5" ry="5.5" fill="#2B2B2B"/><ellipse cx="63" cy="62" rx="4.5" ry="5.5" fill="#2B2B2B"/>
+  <circle cx="42.5" cy="60" r="1.6" fill="#fff"/><circle cx="64.5" cy="60" r="1.6" fill="#fff"/>
+  <ellipse cx="32" cy="74" rx="6" ry="3.5" fill="#FF8FA3" opacity=".6"/><ellipse cx="72" cy="74" rx="6" ry="3.5" fill="#FF8FA3" opacity=".6"/>
+  <path d="M42 74 Q52 84 62 74" stroke="#2B2B2B" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>`;
+document.querySelector(".brand").innerHTML = `${MASCOT}<span>打球啦</span>`;
+
 // ---------- 小工具 ----------
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -103,9 +124,9 @@ async function main() {
   S.view = getView();
   $nav.classList.remove("hidden");
 
+  // 沒登入（通常是用一般瀏覽器開啟）：顯示歡迎頁，由使用者自己按登入
   if (!liff.isLoggedIn()) {
-    if (S.view === "help") { render(); return; }
-    liff.login({ redirectUri: location.href });
+    render();
     return;
   }
 
@@ -188,12 +209,14 @@ function render() {
   if (S.view === "admin" && S.loggedIn && S.me && !isAdmin()) S.view = "home";
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === S.view));
 
-  const key = S.view === "admin" ? `admin:${S.adminTab}` : S.view;
+  // 沒登入時，除了教學頁以外都顯示歡迎頁
+  const view = !S.loggedIn && S.view !== "help" ? "landing" : S.view;
+  const key = view === "admin" ? `admin:${S.adminTab}` : view;
   if (S.shellKey !== key) {
     S.shellKey = key;
-    SHELL[S.view]();
+    SHELL[view]();
   }
-  UPDATE[S.view]?.();
+  UPDATE[view]?.();
 }
 
 function eventCard(ev) {
@@ -212,7 +235,7 @@ function eventCard(ev) {
 
   return `
   <div class="card">
-    <div class="card-head"><span>🏓 ${esc(ev.title || "匹克球揪團")}</span>${tag}</div>
+    <div class="card-head"><span class="ttl"><img class="pb-ico" src="pickleball.svg" alt="">${esc(ev.title || "匹克球揪團")}</span>${tag}</div>
     <div class="card-body">
       <div class="loc">📍 ${esc(ev.location)}</div>
       <div>📅 ${fmtRange(ev.start, ev.end)}</div>
@@ -234,6 +257,27 @@ function eventCard(ev) {
 }
 
 const SHELL = {
+  landing() {
+    $app.innerHTML = `
+    <div class="landing">
+      <div class="landing-hero">
+        ${MASCOT}
+        <h1>匹克球揪團</h1>
+        <p class="muted">一起打球吧！看看最近有哪些場次可以報名</p>
+      </div>
+      <div class="panel">
+        <b>🔒 這是社團內部頁面</b>
+        <p class="muted">場次、場地與名單需要用 LINE 登入後才會顯示。</p>
+        <button class="primary" style="width:100%" data-act="login">用 LINE 登入</button>
+      </div>
+      <div class="panel">
+        <b>👥 怎麼報名？</b>
+        <p>點場次卡片的「報名 +1」就完成！<br>一人一位，朋友想來請他自己按。<br>額滿會自動排候補，有人取消就遞補你。</p>
+        <button class="small" data-act="goHelp">看完整教學 →</button>
+      </div>
+      <p class="muted" style="text-align:center">尚未登入</p>
+    </div>`;
+  },
   home() {
     $app.innerHTML = `<h2>近期揪團</h2><div id="blockedNote"></div><div id="list" class="cards"></div>`;
   },
@@ -281,7 +325,7 @@ const SHELL = {
       </div>
       <div class="panel">
         <b>網站功能</b>
-        <p>🏓 揪團：查看並報名近期場次</p>
+        <p><img class="pb-ico" src="pickleball.svg" alt="">揪團：查看並報名近期場次</p>
         <p>📅 行事曆：用月曆查看所有場次</p>
         <p>🙋 我的：查看自己報名的場次與正取／候補狀態</p>
       </div>
@@ -315,7 +359,7 @@ const UPDATE = {
       ? `<div class="panel" style="color:var(--red)">你的帳號已被管理員停權，暫時無法報名。</div>` : "";
     document.getElementById("list").innerHTML = list.length
       ? list.map(eventCard).join("")
-      : `<div class="empty">${S.loggedIn ? "目前沒有開放報名的揪團 🏓" : "載入中…"}</div>`;
+      : `<div class="empty">${MASCOT}目前沒有即將到來的揪團<br><span class="muted">敲敲主揪，或等下一場開團吧！</span></div>`;
   },
   calendar() {
     const m = S.calMonth;
@@ -349,7 +393,7 @@ const UPDATE = {
     const mine = S.events.filter((e) => (e.entries || []).some((x) => x.uid === S.uid));
     const up = mine.filter((e) => e.end > now);
     const past = mine.filter((e) => e.end <= now).reverse();
-    document.getElementById("myUp").innerHTML = up.length ? up.map(eventCard).join("") : `<div class="empty">還沒有報名任何揪團</div>`;
+    document.getElementById("myUp").innerHTML = up.length ? up.map(eventCard).join("") : `<div class="empty">${MASCOT}還沒有報名任何揪團</div>`;
     document.getElementById("myPast").innerHTML = past.length
       ? past.map((e) => {
           const p = myPos(e);
@@ -539,7 +583,13 @@ $app.addEventListener("click", async (e) => {
   };
 
   switch (act) {
-    case "login": liff.login({ redirectUri: location.href }); break;
+    case "login": {
+      const url = new URL(location.href);
+      if (url.searchParams.get("view") === "help") url.searchParams.delete("view");
+      liff.login({ redirectUri: url.toString() });
+      break;
+    }
+    case "goHelp": go("help"); break;
     case "join":
       if (!confirm(`確定要報名「${ev?.title || "匹克球揪團"}」${ev ? `\n${ev.location} ${fmtRange(ev.start, ev.end)}` : ""}？（一人一位）`)) return;
       await busy(async () => {

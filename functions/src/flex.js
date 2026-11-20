@@ -2,8 +2,11 @@
 const { splitEntries } = require("./core");
 const { fmtRange } = require("./time");
 
-const BROWN = "#A67C52";
-const LIGHT = "#E9DDCD";
+// 配色：亮黃 + 牛仔藍
+const BROWN = "#2F5D8C"; // 主色（牛仔藍）：按鈕、人數、進度點
+const YELLOW = "#FFD43B"; // 標題列
+const INK = "#2B2B2B";
+const LIGHT = "#F3E3A0";
 const GRAY = "#7A7A7A";
 const BLUE = "#7C93B8";
 const MAX_DOTS = 12;
@@ -24,7 +27,7 @@ function text(t, opts = {}) {
   return { type: "text", text: t, wrap: true, ...opts };
 }
 
-function eventBubble(ev, liffId) {
+function eventBubble(ev, liffId, iconUrl) {
   const { main, wait } = splitEntries(ev);
   const cap = ev.capacity;
   const liffBase = `https://liff.line.me/${liffId}`;
@@ -70,12 +73,14 @@ function eventBubble(ev, liffId) {
     size: "kilo",
     header: {
       type: "box",
-      layout: "horizontal",
-      backgroundColor: ev.status === "open" ? BROWN : "#8C8279",
+      layout: "baseline",
+      spacing: "sm",
+      backgroundColor: ev.status === "open" ? YELLOW : "#D9D4C7",
       paddingAll: "14px",
       contents: [
-        text(`🏓 ${ev.title || "匹克球揪團"}`, { color: "#FFFFFF", weight: "bold", size: "md" }),
-        ...(ev.status === "open" ? [] : [text("🔒 已截止", { color: "#FFFFFF", size: "xs", flex: 0, gravity: "center", wrap: false })]),
+        ...(iconUrl ? [{ type: "icon", url: iconUrl, size: "xl" }] : []),
+        text(ev.title || "匹克球揪團", { color: INK, weight: "bold", size: "md" }),
+        ...(ev.status === "open" ? [] : [text("🔒 已截止", { color: INK, size: "xs", flex: 0, wrap: false })]),
       ],
     },
     body: { type: "box", layout: "vertical", spacing: "sm", contents: body },
@@ -107,17 +112,17 @@ function eventBubble(ev, liffId) {
   };
 }
 
-function eventsCarousel(events, liffId) {
+function eventsCarousel(events, liffId, iconUrl) {
   return {
     type: "flex",
     altText: `近期揪團（${events.length} 場）`,
-    contents: { type: "carousel", contents: events.map((e) => eventBubble(e, liffId)) },
+    contents: { type: "carousel", contents: events.map((e) => eventBubble(e, liffId, iconUrl)) },
   };
 }
 
 // 單場字卡（報名 / 取消後回覆）
-function eventMessage(ev, liffId, altText) {
-  return { type: "flex", altText: altText || `🏓 ${ev.title || "匹克球揪團"}`, contents: eventBubble(ev, liffId) };
+function eventMessage(ev, liffId, altText, iconUrl) {
+  return { type: "flex", altText: altText || ev.title || "匹克球揪團", contents: eventBubble(ev, liffId, iconUrl) };
 }
 
 /**
