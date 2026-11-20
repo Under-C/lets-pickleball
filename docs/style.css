@@ -1,0 +1,124 @@
+:root {
+  --brown: #a67c52;
+  --brown-dark: #8a6440;
+  --light: #e9ddcd;
+  --bg: #f6f2ec;
+  --card: #ffffff;
+  --text: #2f2a25;
+  --muted: #7a7a7a;
+  --blue: #7c93b8;
+  --red: #c0533f;
+  --green: #4f8a5b;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+.hidden { display: none !important; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--brown); color: #fff;
+}
+.brand { font-weight: 700; font-size: 18px; }
+.me { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.me img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #fff; color: var(--brown); font-weight: 700; }
+.badge.red { background: var(--red); color: #fff; }
+
+main { max-width: 720px; margin: 0 auto; padding: 16px; }
+h2 { font-size: 18px; margin: 8px 0 12px; }
+h3 { font-size: 16px; margin: 20px 0 8px; }
+.muted { color: var(--muted); font-size: 13px; }
+.loading, .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+
+/* 揪團卡片 */
+.cards { display: grid; gap: 14px; }
+.card { background: var(--card); border-radius: var(--radius); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.card-head { background: var(--brown); color: #fff; padding: 12px 14px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card-body { padding: 12px 14px; display: grid; gap: 6px; font-size: 14px; }
+.card-body .loc { font-weight: 700; font-size: 16px; }
+.dots { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--light); }
+.dot.on { background: var(--brown); }
+.count { font-size: 18px; font-weight: 700; color: var(--brown); }
+.count small { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 10px; }
+.status { color: var(--brown); font-weight: 700; }
+.names { font-size: 12px; color: #555; }
+.names.wait { color: var(--blue); }
+.mine { display: inline-block; font-size: 12px; padding: 3px 10px; border-radius: 999px; background: #f1e7da; color: var(--brown-dark); font-weight: 700; }
+.mine.wait { background: #e6ecf5; color: #4d6488; }
+.card-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 14px 14px; }
+
+button, .btn {
+  appearance: none; border: 0; border-radius: 10px;
+  padding: 10px 12px; font-size: 15px; font-weight: 600;
+  background: #e6e6ea; color: var(--text); cursor: pointer;
+}
+button.primary { background: var(--brown); color: #fff; }
+button.danger { background: var(--red); color: #fff; }
+button.small { padding: 6px 10px; font-size: 13px; }
+button:disabled { opacity: .5; cursor: default; }
+
+/* 底部導覽 */
+.nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  display: flex; background: #fff; border-top: 1px solid #ddd;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.nav a { flex: 1; text-align: center; padding: 8px 0; font-size: 20px; cursor: pointer; color: var(--muted); text-decoration: none; }
+.nav a span { display: block; font-size: 11px; }
+.nav a.active { color: var(--brown); font-weight: 700; }
+
+/* 行事曆 */
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; background: #fff; border-radius: var(--radius); padding: 8px; }
+.cal-wd { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; }
+.cal-day { aspect-ratio: 1 / 1; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 6px; font-size: 14px; cursor: pointer; }
+.cal-day.other { color: #c5c5c5; }
+.cal-day.today { outline: 2px solid var(--light); }
+.cal-day.sel { background: var(--brown); color: #fff; }
+.cal-day .marks { display: flex; gap: 2px; margin-top: 4px; }
+.cal-day .marks i { width: 6px; height: 6px; border-radius: 50%; background: var(--brown); }
+.cal-day.sel .marks i { background: #fff; }
+
+/* 表單 / 後台 */
+.panel { background: #fff; border-radius: var(--radius); padding: 14px; margin-bottom: 14px; }
+.form { display: grid; gap: 10px; }
+.form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.form .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.form .check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; }
+input, select, textarea { font: inherit; padding: 9px 10px; border: 1px solid #d6cfc5; border-radius: 8px; background: #fff; color: var(--text); width: 100%; }
+.form .check input { width: auto; }
+.tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.tabs button.active { background: var(--brown); color: #fff; }
+.list { display: grid; gap: 8px; }
+.item { background: #fff; border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px; }
+.item .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.item .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.user { display: flex; align-items: center; gap: 10px; }
+.user img, .user .ph { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--light); flex: none; }
+.user .info { flex: 1; min-width: 0; }
+.user .info b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry { display: flex; justify-content: space-between; align-items: center; font-size: 14px; padding: 4px 0; border-bottom: 1px dashed #eee; }
+
+/* 教學 */
+.help ol { padding-left: 20px; line-height: 1.8; }
+.help .panel p { line-height: 1.7; margin: 6px 0; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: rgba(40, 35, 30, .92); color: #fff; padding: 10px 16px; border-radius: 10px;
+  font-size: 14px; max-width: 90vw; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 50; white-space: pre-line;
+}
+.toast.show { opacity: 1; }

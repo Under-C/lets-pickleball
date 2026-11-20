@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>打球啦｜匹克球報名</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏓</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🏓 打球啦</div>
+    <div id="me" class="me"></div>
+  </header>
+
+  <main id="app">
+    <div class="loading">載入中…</div>
+  </main>
+
+  <nav id="nav" class="nav hidden">
+    <a data-view="home">🏓<span>揪團</span></a>
+    <a data-view="calendar">📅<span>行事曆</span></a>
+    <a data-view="my">🙋<span>我的</span></a>
+    <a data-view="help">📖<span>教學</span></a>
+    <a data-view="admin" class="admin-only hidden">🛠️<span>管理</span></a>
+  </nav>
+
+  <div id="toast" class="toast"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

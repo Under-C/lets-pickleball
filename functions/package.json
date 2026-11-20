@@ -1,0 +1,17 @@
+{
+  "name": "lets-pickleball-functions",
+  "private": true,
+  "description": "打球啦 匹克球報名系統 - Cloud Functions",
+  "main": "index.js",
+  "engines": {
+    "node": "24"
+  },
+  "scripts": {
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0",
+    "firebase-functions": "^7.2.5"
+  }
+}
