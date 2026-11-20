@@ -90,8 +90,26 @@ function statusText(m, w, cap) {
   return "額滿囉！剛剛好一場";
 }
 const isSuper = () => S.me?.role === "admin";
-const adminGroupsAll = () => (isSuper() ? S.groups : S.groups.filter((g) => (g.admins || []).includes(S.uid)));
-const adminGroups = () => adminGroupsAll().filter((g) => g.active !== false); // Bot 還在的群組
+// 我在某群組的權限（群組管理員 = 全部權限）
+function permsIn(g) {
+  if (!g) return { admin: isSuper(), create: isSuper(), manage: isSuper(), block: isSuper() };
+  const admin = isSuper() || (g.admins || []).includes(S.uid);
+  const has = (f) => admin || (g[f] || []).includes(S.uid);
+  return { admin, create: has("canCreate"), manage: has("canManage"), block: has("canBlock") };
+}
+const anyPerm = (p) => p.admin || p.create || p.manage || p.block;
+const active = (list) => list.filter((g) => g.active !== false); // Bot 還在的群組
+const groupsWith = (fn) => S.groups.filter((g) => fn(permsIn(g)));
+const adminGroupsAll = () => groupsWith(anyPerm);                           // 有任何管理權限的群組
+const adminGroups = () => active(adminGroupsAll());
+const eventGroupsAll = () => groupsWith((p) => p.create || p.manage);      // 可以處理揪團的群組
+const memberGroupsAll = () => groupsWith((p) => p.admin || p.block);       // 可以管成員的群組
+// 能不能管理某場揪團：揪團管理權限，或自己開的團
+function canManageEv(ev) {
+  if (!ev.groupId) return isSuper();
+  const p = permsIn(findGroup(ev.groupId));
+  return p.manage || (p.create && ev.createdBy === S.uid);
+}
 const activeGroups = () => S.groups.filter((g) => g.active !== false);
 const isAdmin = () => isSuper() || adminGroups().length > 0; // 可以進入管理頁
 const findGroup = (gid) => S.groups.find((g) => g.id === gid);
@@ -271,7 +289,9 @@ async function firebaseLogin() {
 
 function renderMe() {
   if (!S.me) { $me.innerHTML = ""; return; }
-  const badges = isSuper() ? `<span class="badge">總管理員</span>` : isAdmin() ? `<span class="badge">群組管理員</span>` : "";
+  const badges = isSuper() ? `<span class="badge">總管理員</span>`
+    : groupsWith((p) => p.admin).length ? `<span class="badge">群組管理員</span>`
+    : isAdmin() ? `<span class="badge">管理權限</span>` : "";
   $me.innerHTML = `${badges}<span>${esc(S.me.displayName)}</span>${S.me.pictureUrl ? `<img src="${esc(S.me.pictureUrl)}" alt="">` : ""}`;
   document.querySelector(".admin-only").classList.toggle("hidden", !isAdmin());
 }
@@ -443,16 +463,21 @@ const SHELL = {
     </div>`;
   },
   admin() {
+    // 沒有對應權限的分頁自動切到可用的分頁
+    if (S.adminTab === "events" && !eventGroupsAll().length && memberGroupsAll().length) S.adminTab = "members";
+    if (S.adminTab === "members" && !memberGroupsAll().length && eventGroupsAll().length) S.adminTab = "events";
+    if (S.adminTab === "users" && !isSuper()) S.adminTab = "events";
+    S.shellKey = `admin:${S.adminTab}`;
     const tab = S.adminTab;
     $app.innerHTML = `
       <div class="tabs">
-        <button data-act="tab" data-tab="events" class="${tab === "events" ? "active" : ""}">揪團管理</button>
-        <button data-act="tab" data-tab="members" class="${tab === "members" ? "active" : ""}">群組成員</button>
+        ${eventGroupsAll().length ? `<button data-act="tab" data-tab="events" class="${tab === "events" ? "active" : ""}">揪團管理</button>` : ""}
+        ${memberGroupsAll().length ? `<button data-act="tab" data-tab="members" class="${tab === "members" ? "active" : ""}">群組成員</button>` : ""}
         ${isSuper() ? `<button data-act="tab" data-tab="users" class="${tab === "users" ? "active" : ""}">總管理員</button>` : ""}
       </div>
       ${tab === "events"
         ? `<div id="groupBar"></div>
-           <button class="primary" style="width:100%;margin-bottom:12px" data-act="newEvent">＋ 新增揪團</button>
+           ${groupsWith((p) => p.create).length ? `<button class="primary" style="width:100%;margin-bottom:12px" data-act="newEvent">＋ 新增揪團</button>` : ""}
            <div id="formBox"></div>
            <h3>即將到來</h3><div id="upList" class="list"></div>
            <h3>已結束（近 120 天）</h3><div id="pastList" class="list"></div>`
@@ -546,10 +571,9 @@ const UPDATE = {
 // ---------- 管理後台：揪團 ----------
 function updateAdminEvents() {
   const now = Date.now();
-  const mine = adminGroups();
+  const mine = active(eventGroupsAll());
   fillGroupBar(mine);
-  const ids = new Set(adminGroupsAll().map((g) => g.id));
-  const manageable = visibleEvents().filter((e) => ids.has(e.groupId) || (isSuper() && !e.groupId));
+  const manageable = visibleEvents().filter(canManageEv);
   const up = manageable.filter((e) => e.end > now);
   const past = manageable.filter((e) => e.end <= now).reverse();
   const item = (e) => {
@@ -563,11 +587,11 @@ function updateAdminEvents() {
     <div class="item">
       ${mine.length > 1 || !e.groupId ? `<div class="muted">👥 ${esc(groupName(e.groupId))}</div>` : ""}
       <div class="top"><b>${esc(e.title || "匹克球揪團")}</b>${isOpen ? `<span class="badge" style="background:#e3f0e5;color:var(--green)">報名中</span>` : `<span class="badge red">🔒 已截止</span>`}</div>
-      <div class="muted">${fmtRange(e.start, e.end)}｜${esc(e.location)}</div>
+      <div class="muted">${fmtRange(e.start, e.end)}｜${esc(e.location)}${e.createdBy === S.uid ? "｜你開的團" : ""}</div>
       <div>👥 正取 ${main.length}/${e.capacity}，候補 ${wait.length}${e.cancelLock24h ? "　⏰24h" : ""}</div>
       <div class="acts">
         <button class="small" data-act="editEvent" data-id="${e.id}">編輯</button>
-        <button class="small" data-act="copyEvent" data-id="${e.id}">複製</button>
+        ${permsIn(findGroup(e.groupId)).create ? `<button class="small" data-act="copyEvent" data-id="${e.id}">複製</button>` : ""}
         <button class="small" data-act="toggleEntries" data-id="${e.id}">${open ? "收起名單" : `名單 (${(e.entries || []).length})`}</button>
         <button class="small ${isOpen ? "" : "primary"}" data-act="toggleStatus" data-id="${e.id}">${isOpen ? "🔒 關閉報名" : "🔓 開放報名"}</button>
         <button class="small danger" data-act="deleteEvent" data-id="${e.id}">刪除揪團</button>
@@ -623,8 +647,9 @@ function openForm(ev, { copy = false } = {}) {
   let end = base.end ?? start + 2 * 60 * 60 * 1000;
   if (copy) { start += 7 * DAY; end += 7 * DAY; }
   const id = copy ? "" : base.id || "";
-  const groups = adminGroups();
-  if (!groups.length) { toast("還沒有可以管理的群組，請先把「打球啦」加入 LINE 群組"); return; }
+  // 新增 / 複製：需要開團權限的群組；編輯：可開團或可管理的群組
+  const groups = active(id ? eventGroupsAll() : groupsWith((p) => p.create));
+  if (!groups.length) { toast("你沒有可以開團的群組"); return; }
   const defGroup = base.groupId || (S.selGroup !== "all" ? S.selGroup : groups[0].id);
   box.innerHTML = `
   <form id="evForm" class="panel form">
@@ -730,9 +755,9 @@ async function loadMembers(force = false) {
 }
 
 function updateAdminMembers() {
-  const all = adminGroupsAll();
+  const all = memberGroupsAll();
   const inactiveCount = all.filter((g) => g.active === false).length;
-  const groups = S.showInactive ? all : adminGroups();
+  const groups = S.showInactive ? all : active(all);
   const sel = document.getElementById("memberGroup");
   const toggle = document.getElementById("inactiveToggle");
   toggle.classList.toggle("hidden", !inactiveCount);
@@ -749,14 +774,15 @@ function updateAdminMembers() {
   if (sel.innerHTML !== opts) sel.innerHTML = opts;
 
   const g = findGroup(S.memberGroup);
+  const my = permsIn(g);
   const info = document.getElementById("groupInfo");
-  const infoHtml = isSuper()
+  const infoHtml = my.admin
     ? `<div style="display:flex;gap:6px"><input id="groupNameInput" maxlength="30" value="${esc(g?.name || "")}" placeholder="群組顯示名稱"><button type="button" class="small primary" data-act="renameGroup" style="white-space:nowrap">改名</button></div>
        <p class="muted">LINE 群組名稱：${esc(g?.lineName || "（無）")}｜成員 ${(g?.members || []).length} 人</p>
-       ${g?.active === false ? `<p class="muted">Bot 已離開這個群組。重新把 Bot 加回同一個群組會自動恢復；不需要的話可以刪除。</p>
+       ${g?.active === false && isSuper() ? `<p class="muted">Bot 已離開這個群組。重新把 Bot 加回同一個群組會自動恢復；不需要的話可以刪除。</p>
        <button type="button" class="small danger" data-act="deleteGroup">刪除這個群組（含所有揪團）</button>` : ""}`
     : `<p class="muted">成員 ${(g?.members || []).length} 人</p>`;
-  if (info.dataset.gid !== S.memberGroup || !document.getElementById("groupNameInput") && isSuper()) {
+  if (info.dataset.gid !== S.memberGroup || !document.getElementById("groupNameInput") && my.admin) {
     info.innerHTML = infoHtml;
     info.dataset.gid = S.memberGroup;
   }
@@ -768,7 +794,9 @@ function updateAdminMembers() {
   const q = S.userQ.trim().toLowerCase();
   const rows = list
     .filter((m) => !q || m.name.toLowerCase().includes(q))
-    .sort((a, b) => (b.isGroupAdmin - a.isGroupAdmin) || (a.blocked - b.blocked) || a.name.localeCompare(b.name, "zh-Hant"));
+    .sort((a, b) => (b.isSuper - a.isSuper) || (b.isGroupAdmin - a.isGroupAdmin)
+      || ((b.canCreate || b.canManage || b.canBlock) - (a.canCreate || a.canManage || a.canBlock))
+      || (a.blocked - b.blocked) || a.name.localeCompare(b.name, "zh-Hant"));
   box.innerHTML = rows.length ? rows.map((m) => {
     const self = m.uid === S.uid;
     return `
@@ -779,9 +807,14 @@ function updateAdminMembers() {
         ${m.isSuper ? `<span class="badge">總管理員</span>` : m.isGroupAdmin ? `<span class="badge">群組管理員</span>` : ""}
         ${m.blocked ? `<span class="badge red">已封鎖</span>` : ""}
       </div>
+      ${!m.isSuper && !m.isGroupAdmin && (m.canCreate || m.canManage || m.canBlock)
+        ? `<div class="perm-tags">${m.canCreate ? "<span>開啟揪團</span>" : ""}${m.canManage ? "<span>揪團管理</span>" : ""}${m.canBlock ? "<span>人員封鎖</span>" : ""}</div>` : ""}
       ${self || m.isSuper ? "" : `<div class="acts">
-        ${isSuper() ? `<button class="small ${m.isGroupAdmin ? "" : "primary"}" data-act="toggleGroupAdmin" data-uid="${esc(m.uid)}" data-on="${m.isGroupAdmin ? 1 : 0}">${m.isGroupAdmin ? "取消群組管理員" : "設為群組管理員"}</button>` : ""}
-        <button class="small ${m.blocked ? "" : "danger"}" data-act="toggleGroupBlock" data-uid="${esc(m.uid)}" data-on="${m.blocked ? 1 : 0}" data-name="${esc(m.name)}">${m.blocked ? "解除封鎖" : "封鎖"}</button>
+        ${my.admin ? `
+          <button class="small ${m.isGroupAdmin ? "" : "primary"}" data-act="setPerm" data-perm="isGroupAdmin" data-uid="${esc(m.uid)}" data-on="${m.isGroupAdmin ? 1 : 0}" data-name="${esc(m.name)}">${m.isGroupAdmin ? "取消群組管理員" : "設為群組管理員"}</button>
+          ${m.isGroupAdmin ? "" : [["canCreate", "開啟揪團"], ["canManage", "揪團管理"], ["canBlock", "人員封鎖"]].map(([k, label]) =>
+            `<button class="small perm ${m[k] ? "on" : ""}" data-act="setPerm" data-perm="${k}" data-uid="${esc(m.uid)}" data-on="${m[k] ? 1 : 0}" data-name="${esc(m.name)}">${m[k] ? "✓ " : "＋ "}${label}</button>`).join("")}` : ""}
+        ${my.block && !m.isGroupAdmin ? `<button class="small ${m.blocked ? "" : "danger"}" data-act="toggleGroupBlock" data-uid="${esc(m.uid)}" data-on="${m.blocked ? 1 : 0}" data-name="${esc(m.name)}">${m.blocked ? "解除封鎖" : "封鎖"}</button>` : ""}
       </div>`}
     </div>`;
   }).join("") : `<div class="empty">還沒有成員<br><span class="muted">成員在群組裡發言或按字卡後就會出現</span></div>`;
@@ -877,11 +910,14 @@ $app.addEventListener("click", async (e) => {
       });
       break;
     }
-    case "toggleGroupAdmin": {
+    case "setPerm": {
       const on = el.dataset.on !== "1";
+      const perm = el.dataset.perm;
+      const label = { isGroupAdmin: "群組管理員", canCreate: "開啟揪團", canManage: "揪團管理", canBlock: "人員封鎖" }[perm];
+      if (perm === "isGroupAdmin" && on && !confirm(`把「${el.dataset.name}」設為群組管理員？\n群組管理員擁有這個群組的全部權限，也能指派其他人。`)) return;
       await busy(async () => {
-        await call("adminSetGroupMember", { groupId: S.memberGroup, uid: el.dataset.uid, isGroupAdmin: on });
-        toast(on ? "已設為群組管理員" : "已取消群組管理員");
+        await call("adminSetGroupMember", { groupId: S.memberGroup, uid: el.dataset.uid, [perm]: on });
+        toast(on ? `已給予「${label}」權限` : `已移除「${label}」權限`);
         await loadMembers(true);
       });
       break;

@@ -41,17 +41,26 @@ async function requireSuper(req) {
   return { uid, user };
 }
 
-// 需要是該群組的管理員（或總管理員）
-async function requireGroupAdmin(req, gid) {
+const PERM_LABEL = { admin: "群組管理員", create: "開啟揪團", manage: "揪團管理", block: "人員封鎖" };
+
+/**
+ * 需要在該群組擁有某些權限（任一即可）。perms 例如 ["admin"]、["create", "manage"]。
+ * 總管理員、群組管理員自動擁有全部權限。
+ */
+async function requireGroupPerm(req, gid, perms) {
   const uid = requireAuth(req);
   const [user, group] = await Promise.all([core.getUser(uid), core.getGroup(gid)]);
   if (!group) throw new HttpsError("not-found", "找不到這個群組");
-  if (!core.isGroupAdmin(group, uid, user)) throw new HttpsError("permission-denied", "你不是這個群組的管理員");
-  return { uid, user, group };
+  const p = core.permsOf(group, uid, user);
+  if (!perms.some((k) => p[k])) {
+    throw new HttpsError("permission-denied", `你在這個群組沒有「${perms.map((k) => PERM_LABEL[k]).join("／")}」權限`);
+  }
+  return { uid, user, group, perms: p };
 }
 
-// 需要是某場揪團所屬群組的管理員
+// 需要能管理某場揪團：揪團管理權限，或自己開的團（且仍有開團權限）
 async function requireEventAdmin(req, eventId) {
+  const uid = requireAuth(req);
   const snap = await db().doc(`events/${String(eventId)}`).get();
   if (!snap.exists) throw new HttpsError("not-found", "找不到這場揪團");
   const ev = snap.data();
@@ -60,8 +69,11 @@ async function requireEventAdmin(req, eventId) {
     const r = await requireSuper(req);
     return { ...r, ref: snap.ref, ev };
   }
-  const r = await requireGroupAdmin(req, ev.groupId);
-  return { ...r, ref: snap.ref, ev };
+  const [user, group] = await Promise.all([core.getUser(uid), core.getGroup(ev.groupId)]);
+  if (!group || !core.canManageEvent(group, ev, uid, user)) {
+    throw new HttpsError("permission-denied", "你沒有管理這場揪團的權限");
+  }
+  return { uid, user, group, ref: snap.ref, ev };
 }
 
 function toHttpsError(err) {
@@ -177,15 +189,15 @@ exports.adminSaveEvent = onCall(async (req) => {
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 200) {
     throw new HttpsError("invalid-argument", "人數上限需為 1–200 的整數");
   }
-  // 要對「目標群組」有管理權限
-  const { uid } = await requireGroupAdmin(req, groupId);
+  // 新增：目標群組要有開團權限；編輯並換群組：目標群組要有開團或揪團管理權限
+  const { uid } = await requireGroupPerm(req, groupId, d.id ? ["create", "manage"] : ["create"]);
   data.groupId = groupId;
   data.startAt = Timestamp.fromMillis(startAt);
   data.endAt = Timestamp.fromMillis(endAt);
   data.updatedAt = FieldValue.serverTimestamp();
 
   if (d.id) {
-    // 編輯時也要對「原本的群組」有管理權限
+    // 編輯時也要能管理這場揪團
     const { ref } = await requireEventAdmin(req, d.id);
     await ref.update(data);
     return { id: ref.id };
@@ -237,10 +249,13 @@ exports.adminRemoveEntry = onCall(async (req) => {
 
 // ---------- 群組管理員：成員 ----------
 
-// 列出群組成員（含名稱、頭像、是否為群組管理員、是否封鎖）
+// 列出群組成員（含名稱、頭像、權限、是否封鎖）：群組管理員或有人員封鎖權限的人可看
 exports.adminListGroupMembers = onCall(async (req) => {
-  const { group } = await requireGroupAdmin(req, cleanStr(req.data.groupId, 80));
-  const ids = [...new Set([...(group.members || []), ...(group.admins || []), ...(group.blocked || [])])];
+  const { group } = await requireGroupPerm(req, cleanStr(req.data.groupId, 80), ["admin", "block"]);
+  const ids = [...new Set([
+    ...(group.members || []), ...(group.admins || []), ...(group.blocked || []),
+    ...(group.canCreate || []), ...(group.canManage || []), ...(group.canBlock || []),
+  ])];
   const refs = ids.map((id) => db().doc(`users/${id}`));
   const snaps = refs.length ? await db().getAll(...refs) : [];
   const members = snaps.map((s, i) => {
@@ -251,6 +266,9 @@ exports.adminListGroupMembers = onCall(async (req) => {
       pictureUrl: u.pictureUrl || "",
       isGroupAdmin: (group.admins || []).includes(ids[i]),
       isSuper: u.role === "admin",
+      canCreate: (group.canCreate || []).includes(ids[i]),
+      canManage: (group.canManage || []).includes(ids[i]),
+      canBlock: (group.canBlock || []).includes(ids[i]),
       blocked: (group.blocked || []).includes(ids[i]),
       inGroup: (group.members || []).includes(ids[i]),
     };
@@ -258,32 +276,44 @@ exports.adminListGroupMembers = onCall(async (req) => {
   return { members };
 });
 
-// 封鎖 / 解除封鎖（群組管理員可）、設定群組管理員（只有總管理員可）
+/**
+ * 設定群組成員：
+ *  blocked                          需要「人員封鎖」權限（不能封鎖總管理員、群組管理員）
+ *  isGroupAdmin / canCreate / canManage / canBlock   需要是群組管理員
+ */
 exports.adminSetGroupMember = onCall(async (req) => {
   const gid = cleanStr(req.data.groupId, 80);
-  const { uid: me, user } = await requireGroupAdmin(req, gid);
-  const target = cleanStr(req.data.uid, 80);
+  const d = req.data || {};
+  const wantsPerm = ["isGroupAdmin", "canCreate", "canManage", "canBlock"].some((k) => d[k] !== undefined);
+  const { uid: me, group } = await requireGroupPerm(req, gid, wantsPerm ? ["admin"] : ["block"]);
+  const target = cleanStr(d.uid, 80);
   if (!target) throw new HttpsError("invalid-argument", "缺少使用者");
   if (target === me) throw new HttpsError("failed-precondition", "不能變更自己的權限或封鎖自己");
+  const targetUser = await core.getUser(target);
+  if (core.isSuper(targetUser)) throw new HttpsError("failed-precondition", "不能變更總管理員");
+
   const ref = db().doc(`groups/${gid}`);
   const patch = {};
-  if (req.data.blocked !== undefined) {
-    const targetUser = await core.getUser(target);
-    if (core.isSuper(targetUser)) throw new HttpsError("failed-precondition", "不能封鎖總管理員");
-    patch.blocked = req.data.blocked ? FieldValue.arrayUnion(target) : FieldValue.arrayRemove(target);
+  const toggle = (field, on) => { patch[field] = on ? FieldValue.arrayUnion(target) : FieldValue.arrayRemove(target); };
+  if (d.blocked !== undefined) {
+    if (d.blocked && (group.admins || []).includes(target)) throw new HttpsError("failed-precondition", "不能封鎖群組管理員");
+    toggle("blocked", !!d.blocked);
   }
-  if (req.data.isGroupAdmin !== undefined) {
-    if (!core.isSuper(user)) throw new HttpsError("permission-denied", "只有總管理員可以指定群組管理員");
-    patch.admins = req.data.isGroupAdmin ? FieldValue.arrayUnion(target) : FieldValue.arrayRemove(target);
-    if (req.data.isGroupAdmin) patch.members = FieldValue.arrayUnion(target);
+  if (d.isGroupAdmin !== undefined) toggle("admins", !!d.isGroupAdmin);
+  if (d.canCreate !== undefined) toggle("canCreate", !!d.canCreate);
+  if (d.canManage !== undefined) toggle("canManage", !!d.canManage);
+  if (d.canBlock !== undefined) toggle("canBlock", !!d.canBlock);
+  // 給了任何權限的人一定是群組成員
+  if (wantsPerm && [d.isGroupAdmin, d.canCreate, d.canManage, d.canBlock].some((v) => v === true)) {
+    patch.members = FieldValue.arrayUnion(target);
   }
   await ref.update(patch);
   return { ok: true };
 });
 
-// 改群組顯示名稱（只有總管理員）
+// 改群組顯示名稱（群組管理員）
 exports.adminRenameGroup = onCall(async (req) => {
-  await requireSuper(req);
+  await requireGroupPerm(req, cleanStr(req.data.groupId, 80), ["admin"]);
   const gid = cleanStr(req.data.groupId, 80);
   const name = cleanStr(req.data.name, 30);
   if (!name) throw new HttpsError("invalid-argument", "請輸入群組名稱");

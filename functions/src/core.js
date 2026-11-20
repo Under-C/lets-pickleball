@@ -71,6 +71,28 @@ const inList = (list, uid) => Array.isArray(list) && list.includes(uid);
 const isGroupAdmin = (group, uid, user) => isSuper(user) || (!!group && inList(group.admins, uid));
 const isGroupMember = (group, uid, user) => isGroupAdmin(group, uid, user) || (!!group && inList(group.members, uid));
 
+// 群組內的個別權限欄位
+const PERM_FIELDS = { create: "canCreate", manage: "canManage", block: "canBlock" };
+
+/**
+ * 某人在某群組的權限：
+ *  admin  群組管理員（最高權限，可指派權限與其他管理員）
+ *  create 開啟揪團（並可管理自己開的團）
+ *  manage 揪團管理（可管理群組內所有揪團）
+ *  block  人員封鎖
+ */
+function permsOf(group, uid, user) {
+  const admin = isGroupAdmin(group, uid, user);
+  const has = (k) => admin || (!!group && inList(group[PERM_FIELDS[k]], uid));
+  return { admin, create: has("create"), manage: has("manage"), block: has("block") };
+}
+
+// 能不能管理某場揪團：有揪團管理權限，或是自己開的團且仍有開團權限
+function canManageEvent(group, ev, uid, user) {
+  const p = permsOf(group, uid, user);
+  return p.manage || (p.create && ev.createdBy === uid);
+}
+
 // Bot 被加入群組 / 聊天室時建立群組資料（已存在則只更新名稱與狀態）
 async function registerGroup({ gid, type, name, pictureUrl }) {
   const ref = db().doc(`groups/${gid}`);
@@ -88,6 +110,9 @@ async function registerGroup({ gid, type, name, pictureUrl }) {
         members: [],
         admins: [],
         blocked: [],
+        canCreate: [],
+        canManage: [],
+        canBlock: [],
         createdAt: FieldValue.serverTimestamp(),
       });
     }
@@ -241,6 +266,6 @@ async function groupsOfUser(uid) {
 module.exports = {
   AppError, DAY_MS, splitEntries, positionOf,
   upsertUser, getUser, isSuper,
-  getGroup, isGroupAdmin, isGroupMember, registerGroup, ensureMember, removeMember, groupsOfUser,
+  getGroup, isGroupAdmin, isGroupMember, permsOf, canManageEvent, PERM_FIELDS, registerGroup, ensureMember, removeMember, groupsOfUser,
   joinBlocker, cancelBlocker, joinEvent, cancelEvent, adminAddEntry, upcomingEvents,
 };

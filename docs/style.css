@@ -129,6 +129,12 @@ input:focus, select:focus { outline: none; border-color: var(--yellow); }
 .user .info b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry { display: flex; justify-content: space-between; align-items: center; font-size: 14px; padding: 6px 0; border-bottom: 2px dotted #f3e9c6; }
 
+/* 成員權限 */
+.perm-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.perm-tags span { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: #e6eef7; color: var(--blue-dark); }
+button.perm { background: #fff; border: 2px solid #e6eef7; box-shadow: none; }
+button.perm.on { background: #e6eef7; color: var(--blue-dark); border-color: #c9d8ea; }
+
 /* 群組切換 */
 .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px; margin-bottom: 4px; }
 .chips .chip { white-space: nowrap; flex: none; background: #fff; }
