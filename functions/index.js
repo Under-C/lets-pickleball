@@ -8,7 +8,8 @@ const { defineSecret, defineString } = require("firebase-functions/params");
 
 const core = require("./src/core");
 const line = require("./src/line");
-const { eventsCarousel, eventMessage, confirmMessage } = require("./src/flex");
+const { eventsCarousel, eventMessage, confirmMessage, createPreviewMessage } = require("./src/flex");
+const { parseCreateCommand, FORMAT_HELP } = require("./src/command");
 const { fmtRange } = require("./src/time");
 
 initializeApp();
@@ -428,6 +429,10 @@ async function handleLineEvent(ev) {
 
   if (ev.type === "message" && ev.message.type === "text") {
     const msg = ev.message.text.trim();
+    if (/^開團/.test(msg)) {
+      await handleCreateCommand(ev, msg, gid, group, userId, sayText);
+      return;
+    }
     if (LIST_KEYWORDS.includes(msg)) {
       let list;
       if (gid) {
@@ -456,6 +461,10 @@ async function handleLineEvent(ev) {
     const params = new URLSearchParams(ev.postback.data);
     const action = params.get("a");
     const eventId = params.get("e");
+    if (action === "cd" || action === "xd") {
+      await handleDraft(ev, params, userId, sayText, liffId, iconUrl, token);
+      return;
+    }
     // 「先不要 / 按錯了」：不需要回覆
     if (!eventId || !["join", "cancel", "cjoin", "ccancel"].includes(action)) return;
 
@@ -518,6 +527,122 @@ async function handleLineEvent(ev) {
       await sayText(`⚠️ ${name}：${e instanceof core.AppError ? e.message : "系統忙碌，請稍後再試"}`);
     }
   }
+}
+
+// ---------- 開團指令 ----------
+
+// 這個人可以開團的群組（在群組內傳指令 = 只看這個群組）
+async function creatableGroups(userId, gid, group) {
+  const user = await core.getUser(userId);
+  if (gid) return group && core.permsOf(group, userId, user).create ? [group] : [];
+  let groups;
+  if (core.isSuper(user)) {
+    const snap = await db().collection("groups").where("active", "==", true).get();
+    groups = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } else {
+    groups = await core.groupsOfUser(userId);
+  }
+  return groups
+    .filter((g) => g.active !== false && core.permsOf(g, userId, user).create)
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-Hant"));
+}
+
+async function handleCreateCommand(ev, msg, gid, group, userId, sayText) {
+  const token = LINE_CHANNEL_ACCESS_TOKEN.value();
+  if (!userId) {
+    await sayText("⚠️ 無法取得你的 LINE 身分，請先將「打球啦」加為好友後再試一次");
+    return;
+  }
+  const groups = await creatableGroups(userId, gid, group);
+  if (!groups.length) {
+    // 群組裡沒有權限的人：不回應，避免一般聊天剛好打到「開團」被打擾
+    if (!gid) await sayText("⚠️ 你沒有任何群組的「開啟揪團」權限，請聯繫群組管理員");
+    return;
+  }
+  // 只輸入「開團」或「開團說明」：回覆格式
+  if (/^開團\s*(說明|格式|教學)?$/.test(msg) && !msg.includes("\n")) {
+    await sayText(FORMAT_HELP);
+    return;
+  }
+  const parsed = parseCreateCommand(msg);
+  if (!parsed.ok) {
+    await sayText(`⚠️ 開團資料不完整：${parsed.error}\n\n${FORMAT_HELP}`);
+    return;
+  }
+  // 先存成草稿，等本人按「確定開團」才真正建立
+  const draft = await db().collection("drafts").add({
+    uid: userId,
+    data: parsed.data,
+    groupIds: groups.map((g) => g.id),
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 24 * 3600e3),
+  });
+  await line.reply(ev.replyToken, createPreviewMessage(parsed.data, groups, draft.id), token);
+}
+
+async function handleDraft(ev, params, userId, sayText, liffId, iconUrl, token) {
+  const ref = db().doc(`drafts/${params.get("d")}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    await sayText("這個開團預覽已經處理過或失效了，請重新傳送開團指令");
+    return;
+  }
+  const draft = snap.data();
+  if (draft.uid !== userId) {
+    await sayText("⚠️ 只有傳送開團指令的人可以確認");
+    return;
+  }
+  if (params.get("a") === "xd") {
+    await ref.delete();
+    await sayText("已取消開團");
+    return;
+  }
+  if (draft.expiresAt && draft.expiresAt.toMillis() < Date.now()) {
+    await ref.delete();
+    await sayText("這個開團預覽已超過 24 小時，請重新傳送開團指令");
+    return;
+  }
+  const gid = params.get("g");
+  if (!(draft.groupIds || []).includes(gid)) {
+    await sayText("⚠️ 群組不正確，請重新傳送開團指令");
+    return;
+  }
+  // 再確認一次權限（預覽之後權限可能被拿掉）
+  const [user, group] = await Promise.all([core.getUser(userId), core.getGroup(gid)]);
+  if (!group || group.active === false || !core.permsOf(group, userId, user).create) {
+    await sayText("⚠️ 你在這個群組沒有「開啟揪團」權限了");
+    return;
+  }
+  const d = draft.data;
+  if (d.startAt <= Date.now()) {
+    await ref.delete();
+    await sayText("⚠️ 開團時間已經過了，請重新傳送開團指令");
+    return;
+  }
+  const data = {
+    groupId: gid,
+    title: d.title,
+    location: d.location,
+    courts: "",
+    note: d.note || "",
+    capacity: d.capacity,
+    cancelLock24h: true,
+    status: "open",
+    startAt: Timestamp.fromMillis(d.startAt),
+    endAt: Timestamp.fromMillis(d.endAt),
+    entries: [],
+    memberIds: [],
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    createdBy: userId,
+  };
+  const evRef = await db().collection("events").add(data);
+  await ref.delete();
+  const text = `✅ 已在「${group.name}」開團！\n在群組輸入「揪團」就能看到並報名。`;
+  await line.reply(ev.replyToken, [
+    { type: "text", text },
+    eventMessage({ ...data, id: evRef.id, groupName: group.name }, liffId, text, iconUrl),
+  ], token);
 }
 
 function eventLabel(ev) {
