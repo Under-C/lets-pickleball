@@ -37,6 +37,7 @@ const S = {
   eventsByGroup: {},     // 一般成員：每個群組各自的揪團
   eventUnsubs: {},
   memberGroup: "",       // 群組成員管理：目前選的群組
+  showInactive: false,   // 群組成員管理：是否顯示 Bot 已離開的群組
   groupMembers: {},      // gid -> 成員清單
 };
 
@@ -89,7 +90,9 @@ function statusText(m, w, cap) {
   return "額滿囉！剛剛好一場";
 }
 const isSuper = () => S.me?.role === "admin";
-const adminGroups = () => (isSuper() ? S.groups : S.groups.filter((g) => (g.admins || []).includes(S.uid)));
+const adminGroupsAll = () => (isSuper() ? S.groups : S.groups.filter((g) => (g.admins || []).includes(S.uid)));
+const adminGroups = () => adminGroupsAll().filter((g) => g.active !== false); // Bot 還在的群組
+const activeGroups = () => S.groups.filter((g) => g.active !== false);
 const isAdmin = () => isSuper() || adminGroups().length > 0; // 可以進入管理頁
 const findGroup = (gid) => S.groups.find((g) => g.id === gid);
 const groupName = (gid) => findGroup(gid)?.name || "（未分組）";
@@ -289,7 +292,7 @@ function render() {
 }
 
 // 群組切換列（只有一個群組時不顯示）
-function groupBar(list = S.groups) {
+function groupBar(list = activeGroups()) {
   if (list.length < 2) return "";
   const chip = (gid, label) => `<button class="small chip ${S.selGroup === gid ? "active" : ""}" data-act="selGroup" data-gid="${esc(gid)}">${esc(label)}</button>`;
   return `<div class="chips">${chip("all", "全部群組")}${list.map((g) => chip(g.id, g.name)).join("")}</div>`;
@@ -436,6 +439,7 @@ const SHELL = {
         : tab === "members"
         ? `<div class="panel form">
              <label>選擇群組<select id="memberGroup"></select></label>
+             <label class="check" id="inactiveToggle"><input type="checkbox" id="showInactive" ${S.showInactive ? "checked" : ""}> 顯示 Bot 已離開的群組</label>
              <div id="groupInfo"></div>
            </div>
            <input id="memberQ" placeholder="搜尋成員名稱…" value="${esc(S.userQ)}" style="margin-bottom:12px">
@@ -449,6 +453,8 @@ const SHELL = {
     }
     const sel = document.getElementById("memberGroup");
     if (sel) sel.addEventListener("change", () => { S.memberGroup = sel.value; loadMembers(true); });
+    const chk = document.getElementById("showInactive");
+    if (chk) chk.addEventListener("change", () => { S.showInactive = chk.checked; S.memberGroup = ""; UPDATE.admin(); });
   },
 };
 
@@ -522,7 +528,7 @@ function updateAdminEvents() {
   const now = Date.now();
   const mine = adminGroups();
   fillGroupBar(mine);
-  const ids = new Set(mine.map((g) => g.id));
+  const ids = new Set(adminGroupsAll().map((g) => g.id));
   const manageable = visibleEvents().filter((e) => ids.has(e.groupId) || (isSuper() && !e.groupId));
   const up = manageable.filter((e) => e.end > now);
   const past = manageable.filter((e) => e.end <= now).reverse();
@@ -704,9 +710,17 @@ async function loadMembers(force = false) {
 }
 
 function updateAdminMembers() {
-  const groups = adminGroups();
+  const all = adminGroupsAll();
+  const inactiveCount = all.filter((g) => g.active === false).length;
+  const groups = S.showInactive ? all : adminGroups();
   const sel = document.getElementById("memberGroup");
+  const toggle = document.getElementById("inactiveToggle");
+  toggle.classList.toggle("hidden", !inactiveCount);
+  toggle.lastChild.textContent = ` 顯示 Bot 已離開的群組（${inactiveCount}）`;
   if (!groups.length) {
+    sel.innerHTML = "";
+    document.getElementById("groupInfo").innerHTML = "";
+    document.getElementById("groupInfo").dataset.gid = "";
     document.getElementById("memberList").innerHTML = `<div class="empty">還沒有可以管理的群組<br><span class="muted">把「打球啦」邀請進 LINE 群組後就會出現在這裡</span></div>`;
     return;
   }
@@ -718,7 +732,9 @@ function updateAdminMembers() {
   const info = document.getElementById("groupInfo");
   const infoHtml = isSuper()
     ? `<div style="display:flex;gap:6px"><input id="groupNameInput" maxlength="30" value="${esc(g?.name || "")}" placeholder="群組顯示名稱"><button type="button" class="small primary" data-act="renameGroup" style="white-space:nowrap">改名</button></div>
-       <p class="muted">LINE 群組名稱：${esc(g?.lineName || "（無）")}｜成員 ${(g?.members || []).length} 人</p>`
+       <p class="muted">LINE 群組名稱：${esc(g?.lineName || "（無）")}｜成員 ${(g?.members || []).length} 人</p>
+       ${g?.active === false ? `<p class="muted">Bot 已離開這個群組。重新把 Bot 加回同一個群組會自動恢復；不需要的話可以刪除。</p>
+       <button type="button" class="small danger" data-act="deleteGroup">刪除這個群組（含所有揪團）</button>` : ""}`
     : `<p class="muted">成員 ${(g?.members || []).length} 人</p>`;
   if (info.dataset.gid !== S.memberGroup || !document.getElementById("groupNameInput") && isSuper()) {
     info.innerHTML = infoHtml;
@@ -839,6 +855,18 @@ $app.addEventListener("click", async (e) => {
         await call("adminSetGroupMember", { groupId: S.memberGroup, uid: el.dataset.uid, isGroupAdmin: on });
         toast(on ? "已設為群組管理員" : "已取消群組管理員");
         await loadMembers(true);
+      });
+      break;
+    }
+    case "deleteGroup": {
+      const g = findGroup(S.memberGroup);
+      const n = S.events.filter((e) => e.groupId === S.memberGroup).length;
+      if (!confirm(`確定刪除「${g?.name}」？\n這個群組的揪團（近期 ${n} 場與更早的紀錄）會一起刪除，無法復原。`)) return;
+      await busy(async () => {
+        const r = await call("adminDeleteGroup", { groupId: S.memberGroup });
+        toast(`已刪除群組與 ${r.deletedEvents} 場揪團`);
+        delete S.groupMembers[S.memberGroup];
+        S.memberGroup = "";
       });
       break;
     }

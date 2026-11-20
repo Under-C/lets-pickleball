@@ -293,6 +293,22 @@ exports.adminRenameGroup = onCall(async (req) => {
   return { ok: true };
 });
 
+// 刪除 Bot 已離開的群組，連同該群組的揪團（只有總管理員）
+exports.adminDeleteGroup = onCall(async (req) => {
+  await requireSuper(req);
+  const gid = cleanStr(req.data.groupId, 80);
+  const ref = db().doc(`groups/${gid}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "找不到這個群組");
+  if (snap.data().active !== false) throw new HttpsError("failed-precondition", "Bot 還在這個群組裡，請先把 Bot 移出群組再刪除");
+  const evs = await db().collection("events").where("groupId", "==", gid).get();
+  const writer = db().bulkWriter();
+  evs.docs.forEach((d) => writer.delete(d.ref));
+  writer.delete(ref);
+  await writer.close();
+  return { deletedEvents: evs.size };
+});
+
 // ---------- 總管理員 ----------
 exports.adminSetUser = onCall(async (req) => {
   const { uid: me } = await requireSuper(req);
