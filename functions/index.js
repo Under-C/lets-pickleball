@@ -34,16 +34,34 @@ function requireAuth(req) {
   return req.auth.uid;
 }
 
-async function getUser(uid) {
-  const snap = await db().doc(`users/${uid}`).get();
-  return snap.exists ? snap.data() : null;
+async function requireSuper(req) {
+  const uid = requireAuth(req);
+  const user = await core.getUser(uid);
+  if (!core.isSuper(user)) throw new HttpsError("permission-denied", "只有總管理員可以執行這個操作");
+  return { uid, user };
 }
 
-async function requireAdmin(req) {
+// 需要是該群組的管理員（或總管理員）
+async function requireGroupAdmin(req, gid) {
   const uid = requireAuth(req);
-  const user = await getUser(uid);
-  if (!user || user.role !== "admin") throw new HttpsError("permission-denied", "只有管理員可以執行這個操作");
-  return { uid, user };
+  const [user, group] = await Promise.all([core.getUser(uid), core.getGroup(gid)]);
+  if (!group) throw new HttpsError("not-found", "找不到這個群組");
+  if (!core.isGroupAdmin(group, uid, user)) throw new HttpsError("permission-denied", "你不是這個群組的管理員");
+  return { uid, user, group };
+}
+
+// 需要是某場揪團所屬群組的管理員
+async function requireEventAdmin(req, eventId) {
+  const snap = await db().doc(`events/${String(eventId)}`).get();
+  if (!snap.exists) throw new HttpsError("not-found", "找不到這場揪團");
+  const ev = snap.data();
+  if (!ev.groupId) {
+    // 沒有群組的舊資料，只有總管理員能處理
+    const r = await requireSuper(req);
+    return { ...r, ref: snap.ref, ev };
+  }
+  const r = await requireGroupAdmin(req, ev.groupId);
+  return { ...r, ref: snap.ref, ev };
 }
 
 function toHttpsError(err) {
@@ -51,6 +69,10 @@ function toHttpsError(err) {
   if (err instanceof core.AppError) return new HttpsError("failed-precondition", err.message, { code: err.code });
   console.error(err);
   return new HttpsError("internal", "系統發生錯誤，請稍後再試");
+}
+
+function cleanStr(v, max) {
+  return String(v == null ? "" : v).trim().slice(0, max);
 }
 
 // ---------- 登入：LIFF ID Token 換 Firebase Custom Token ----------
@@ -66,14 +88,24 @@ exports.lineLogin = onCall(async (req) => {
   const uid = profile.sub;
   const user = await core.upsertUser({ uid, displayName: profile.name, pictureUrl: profile.picture || "" });
   const token = await getAuth().createCustomToken(uid);
-  return { token, role: user.role, blocked: !!user.blocked };
+  return { token, role: user.role };
+});
+
+// 從群組字卡點進網站時，把使用者加入該群組
+exports.linkGroup = onCall(async (req) => {
+  const uid = requireAuth(req);
+  const gid = cleanStr(req.data.groupId, 80);
+  const group = await core.getGroup(gid);
+  if (!group || !group.active) throw new HttpsError("not-found", "找不到這個群組");
+  await core.ensureMember(gid, uid, group);
+  return { name: group.name };
 });
 
 // ---------- 一般用戶：報名 / 取消 ----------
 exports.joinEvent = onCall(async (req) => {
   const uid = requireAuth(req);
   try {
-    const user = await getUser(uid);
+    const user = await core.getUser(uid);
     const r = await core.joinEvent({ eventId: String(req.data.eventId), uid, name: user && user.displayName });
     return { result: r.result, position: r.position };
   } catch (e) {
@@ -91,17 +123,13 @@ exports.cancelEvent = onCall(async (req) => {
   }
 });
 
-// ---------- 管理員 ----------
-function cleanStr(v, max) {
-  return String(v == null ? "" : v).trim().slice(0, max);
-}
-
+// ---------- 群組管理員：揪團 ----------
 exports.adminSaveEvent = onCall(async (req) => {
-  const { uid } = await requireAdmin(req);
   const d = req.data || {};
   const startAt = Number(d.startAt);
   const endAt = Number(d.endAt);
   const capacity = Number(d.capacity);
+  const groupId = cleanStr(d.groupId, 80);
   const data = {
     title: cleanStr(d.title, 40) || "匹克球揪團",
     location: cleanStr(d.location, 60),
@@ -111,6 +139,7 @@ exports.adminSaveEvent = onCall(async (req) => {
     cancelLock24h: !!d.cancelLock24h,
     status: d.status === "closed" ? "closed" : "open",
   };
+  if (!groupId) throw new HttpsError("invalid-argument", "請選擇群組");
   if (!data.location) throw new HttpsError("invalid-argument", "請填寫地點");
   if (!Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= startAt) {
     throw new HttpsError("invalid-argument", "開始 / 結束時間不正確");
@@ -118,13 +147,16 @@ exports.adminSaveEvent = onCall(async (req) => {
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 200) {
     throw new HttpsError("invalid-argument", "人數上限需為 1–200 的整數");
   }
+  // 要對「目標群組」有管理權限
+  const { uid } = await requireGroupAdmin(req, groupId);
+  data.groupId = groupId;
   data.startAt = Timestamp.fromMillis(startAt);
   data.endAt = Timestamp.fromMillis(endAt);
   data.updatedAt = FieldValue.serverTimestamp();
 
   if (d.id) {
-    const ref = db().doc(`events/${String(d.id)}`);
-    if (!(await ref.get()).exists) throw new HttpsError("not-found", "找不到這場揪團");
+    // 編輯時也要對「原本的群組」有管理權限
+    const { ref } = await requireEventAdmin(req, d.id);
     await ref.update(data);
     return { id: ref.id };
   }
@@ -139,24 +171,20 @@ exports.adminSaveEvent = onCall(async (req) => {
 });
 
 exports.adminDeleteEvent = onCall(async (req) => {
-  await requireAdmin(req);
-  await db().doc(`events/${String(req.data.eventId)}`).delete();
+  const { ref } = await requireEventAdmin(req, req.data.eventId);
+  await ref.delete();
   return { ok: true };
 });
 
-exports.adminRemoveEntry = onCall(async (req) => {
-  await requireAdmin(req);
-  try {
-    const r = await core.cancelEvent({ eventId: String(req.data.eventId), uid: String(req.data.uid), force: true });
-    return { promoted: r.promoted ? r.promoted.name : null };
-  } catch (e) {
-    throw toHttpsError(e);
-  }
+exports.adminSetEventStatus = onCall(async (req) => {
+  const { ref } = await requireEventAdmin(req, req.data.eventId);
+  const status = req.data.status === "closed" ? "closed" : "open";
+  await ref.update({ status, updatedAt: FieldValue.serverTimestamp() });
+  return { status };
 });
 
-// 管理員手動新增報名者（只填名字）
 exports.adminAddEntry = onCall(async (req) => {
-  const { uid } = await requireAdmin(req);
+  const { uid } = await requireEventAdmin(req, req.data.eventId);
   const name = cleanStr(req.data.name, 30);
   if (!name) throw new HttpsError("invalid-argument", "請輸入名字");
   try {
@@ -167,27 +195,83 @@ exports.adminAddEntry = onCall(async (req) => {
   }
 });
 
-// 管理員開放 / 關閉報名
-exports.adminSetEventStatus = onCall(async (req) => {
-  await requireAdmin(req);
-  const ref = db().doc(`events/${String(req.data.eventId)}`);
-  if (!(await ref.get()).exists) throw new HttpsError("not-found", "找不到這場揪團");
-  const status = req.data.status === "closed" ? "closed" : "open";
-  await ref.update({ status, updatedAt: FieldValue.serverTimestamp() });
-  return { status };
+exports.adminRemoveEntry = onCall(async (req) => {
+  await requireEventAdmin(req, req.data.eventId);
+  try {
+    const r = await core.cancelEvent({ eventId: String(req.data.eventId), uid: String(req.data.uid), force: true });
+    return { promoted: r.promoted ? r.promoted.name : null };
+  } catch (e) {
+    throw toHttpsError(e);
+  }
 });
 
-exports.adminSetUser = onCall(async (req) => {
-  const { uid: me } = await requireAdmin(req);
-  const target = String(req.data.uid || "");
+// ---------- 群組管理員：成員 ----------
+
+// 列出群組成員（含名稱、頭像、是否為群組管理員、是否封鎖）
+exports.adminListGroupMembers = onCall(async (req) => {
+  const { group } = await requireGroupAdmin(req, cleanStr(req.data.groupId, 80));
+  const ids = [...new Set([...(group.members || []), ...(group.admins || []), ...(group.blocked || [])])];
+  const refs = ids.map((id) => db().doc(`users/${id}`));
+  const snaps = refs.length ? await db().getAll(...refs) : [];
+  const members = snaps.map((s, i) => {
+    const u = s.exists ? s.data() : {};
+    return {
+      uid: ids[i],
+      name: u.displayName || "（尚未登入過的用戶）",
+      pictureUrl: u.pictureUrl || "",
+      isGroupAdmin: (group.admins || []).includes(ids[i]),
+      isSuper: u.role === "admin",
+      blocked: (group.blocked || []).includes(ids[i]),
+      inGroup: (group.members || []).includes(ids[i]),
+    };
+  });
+  return { members };
+});
+
+// 封鎖 / 解除封鎖（群組管理員可）、設定群組管理員（只有總管理員可）
+exports.adminSetGroupMember = onCall(async (req) => {
+  const gid = cleanStr(req.data.groupId, 80);
+  const { uid: me, user } = await requireGroupAdmin(req, gid);
+  const target = cleanStr(req.data.uid, 80);
   if (!target) throw new HttpsError("invalid-argument", "缺少使用者");
   if (target === me) throw new HttpsError("failed-precondition", "不能變更自己的權限或封鎖自己");
+  const ref = db().doc(`groups/${gid}`);
+  const patch = {};
+  if (req.data.blocked !== undefined) {
+    const targetUser = await core.getUser(target);
+    if (core.isSuper(targetUser)) throw new HttpsError("failed-precondition", "不能封鎖總管理員");
+    patch.blocked = req.data.blocked ? FieldValue.arrayUnion(target) : FieldValue.arrayRemove(target);
+  }
+  if (req.data.isGroupAdmin !== undefined) {
+    if (!core.isSuper(user)) throw new HttpsError("permission-denied", "只有總管理員可以指定群組管理員");
+    patch.admins = req.data.isGroupAdmin ? FieldValue.arrayUnion(target) : FieldValue.arrayRemove(target);
+    if (req.data.isGroupAdmin) patch.members = FieldValue.arrayUnion(target);
+  }
+  await ref.update(patch);
+  return { ok: true };
+});
+
+// 改群組顯示名稱（只有總管理員）
+exports.adminRenameGroup = onCall(async (req) => {
+  await requireSuper(req);
+  const gid = cleanStr(req.data.groupId, 80);
+  const name = cleanStr(req.data.name, 30);
+  if (!name) throw new HttpsError("invalid-argument", "請輸入群組名稱");
+  const ref = db().doc(`groups/${gid}`);
+  if (!(await ref.get()).exists) throw new HttpsError("not-found", "找不到這個群組");
+  await ref.update({ name });
+  return { ok: true };
+});
+
+// ---------- 總管理員 ----------
+exports.adminSetUser = onCall(async (req) => {
+  const { uid: me } = await requireSuper(req);
+  const target = String(req.data.uid || "");
+  if (!target) throw new HttpsError("invalid-argument", "缺少使用者");
+  if (target === me) throw new HttpsError("failed-precondition", "不能變更自己的權限");
   const ref = db().doc(`users/${target}`);
   if (!(await ref.get()).exists) throw new HttpsError("not-found", "找不到這位使用者");
-  const patch = {};
-  if (req.data.role !== undefined) patch.role = req.data.role === "admin" ? "admin" : "user";
-  if (req.data.blocked !== undefined) patch.blocked = !!req.data.blocked;
-  await ref.update(patch);
+  if (req.data.role !== undefined) await ref.update({ role: req.data.role === "admin" ? "admin" : "user" });
   return { ok: true };
 });
 
@@ -206,34 +290,88 @@ exports.lineWebhook = onRequest(
     }
     const events = (req.body && req.body.events) || [];
     await Promise.all(
-      events.map((ev) =>
-        handleLineEvent(ev).catch((e) => console.error("handleLineEvent error", e))
-      )
+      events.map((ev) => handleLineEvent(ev).catch((e) => console.error("handleLineEvent error", e)))
     );
     res.status(200).send("ok");
   }
 );
 
+// 群組 / 多人聊天室的 ID（一對一聊天為 null）
+function chatGroupId(source) {
+  if (!source) return null;
+  if (source.type === "group") return source.groupId;
+  if (source.type === "room") return source.roomId;
+  return null;
+}
+
 async function handleLineEvent(ev) {
   const token = LINE_CHANNEL_ACCESS_TOKEN.value();
   const liffId = LIFF_ID.value();
   const iconUrl = `${SITE_URL.value().replace(/\/$/, "")}/pickleball.png`;
+  const gid = chatGroupId(ev.source);
+  const userId = ev.source && ev.source.userId;
+  const sayText = (t) => line.reply(ev.replyToken, { type: "text", text: t }, token);
+
+  // Bot 被加入群組 / 聊天室
+  if (ev.type === "join" && gid) {
+    const summary = ev.source.type === "group" ? await line.getGroupSummary(gid, token) : { name: "", pictureUrl: "" };
+    await core.registerGroup({ gid, type: ev.source.type, name: summary.name, pictureUrl: summary.pictureUrl });
+    await sayText("大家好！我是打球啦 🎉\n在群組輸入「揪團」就能查看近期場次並報名。\n輸入「教學」可以看使用說明。");
+    return;
+  }
+  // Bot 離開群組
+  if (ev.type === "leave" && gid) {
+    await db().doc(`groups/${gid}`).update({ active: false }).catch(() => {});
+    return;
+  }
+  // 有人加入 / 離開群組
+  if (ev.type === "memberJoined" && gid) {
+    for (const m of (ev.joined && ev.joined.members) || []) {
+      if (m.userId) await core.ensureMember(gid, m.userId);
+    }
+    return;
+  }
+  if (ev.type === "memberLeft" && gid) {
+    for (const m of (ev.left && ev.left.members) || []) {
+      if (m.userId) await core.removeMember(gid, m.userId);
+    }
+    return;
+  }
+
+  // 在群組裡發言或按按鈕的人，記錄為群組成員（Bot 加入前就存在的群組也會自動建立）
+  let group = null;
+  if (gid && userId) {
+    group = await core.getGroup(gid);
+    if (!group) {
+      const summary = ev.source.type === "group" ? await line.getGroupSummary(gid, token) : { name: "", pictureUrl: "" };
+      await core.registerGroup({ gid, type: ev.source.type, name: summary.name, pictureUrl: summary.pictureUrl });
+      group = await core.getGroup(gid);
+    }
+    group = await core.ensureMember(gid, userId, group);
+  }
 
   if (ev.type === "message" && ev.message.type === "text") {
     const msg = ev.message.text.trim();
     if (LIST_KEYWORDS.includes(msg)) {
-      const list = await core.upcomingEvents(5);
+      let list;
+      if (gid) {
+        list = await core.upcomingEvents(gid, 5);
+      } else if (userId) {
+        // 一對一聊天：顯示使用者所在所有群組的揪團，並標示群組名稱
+        const groups = await core.groupsOfUser(userId);
+        const names = Object.fromEntries(groups.map((g) => [g.id, g.name]));
+        list = (await core.upcomingEvents(groups.map((g) => g.id), 5)).map((e) => ({ ...e, groupName: names[e.groupId] }));
+      } else {
+        list = [];
+      }
       if (!list.length) {
-        await line.reply(ev.replyToken, { type: "text", text: "目前沒有即將到來的揪團喔！" }, token);
+        await sayText(gid ? "這個群組目前沒有即將到來的揪團喔！" : "你所在的群組目前沒有即將到來的揪團喔！");
       } else {
         await line.reply(ev.replyToken, eventsCarousel(list, liffId, iconUrl), token);
       }
     } else if (HELP_KEYWORDS.includes(msg)) {
-      await line.reply(
-        ev.replyToken,
-        { type: "text", text: `📖 使用教學\nhttps://liff.line.me/${liffId}?view=help\n\n在群組輸入「揪團」即可查看近期場次並報名。` },
-        token
-      );
+      const g = gid ? `&g=${encodeURIComponent(gid)}` : "";
+      await sayText(`📖 使用教學\nhttps://liff.line.me/${liffId}?view=help${g}\n\n在群組輸入「揪團」即可查看近期場次並報名。`);
     }
     return;
   }
@@ -245,13 +383,10 @@ async function handleLineEvent(ev) {
     // 「先不要 / 按錯了」：不需要回覆
     if (!eventId || !["join", "cancel", "cjoin", "ccancel"].includes(action)) return;
 
-    const sayText = (t) => line.reply(ev.replyToken, { type: "text", text: t }, token);
-    const userId = ev.source && ev.source.userId;
     if (!userId) {
       await sayText("⚠️ 無法取得你的 LINE 身分，請先將「打球啦」加為好友後再試一次");
       return;
     }
-
     // 確認按鈕只有本人按才有效
     if ((action === "cjoin" || action === "ccancel") && params.get("u") !== userId) {
       await sayText(`⚠️ 這個確認按鈕不是給你的喔，請點字卡上的「${action === "cjoin" ? "報名 +1" : "取消 -1"}」`);
@@ -268,10 +403,11 @@ async function handleLineEvent(ev) {
       return;
     }
     const event = { id: snap.id, ...snap.data() };
+    const eventGroup = event.groupId === (group && group.id) ? group : await core.getGroup(event.groupId);
 
     // 第一步：檢查後跳出確認視窗
     if (action === "join" || action === "cancel") {
-      const blocker = action === "join" ? core.joinBlocker(event, userId, user) : core.cancelBlocker(event, userId);
+      const blocker = action === "join" ? core.joinBlocker(event, userId, eventGroup, user) : core.cancelBlocker(event, userId);
       if (blocker) {
         await sayText(`${name}：${blocker}\n${eventLabel(event)}`);
         return;

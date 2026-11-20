@@ -49,4 +49,14 @@ async function getProfile(source, accessToken) {
   return { displayName: p.displayName || "", pictureUrl: p.pictureUrl || "" };
 }
 
-module.exports = { verifySignature, verifyIdToken, reply, getProfile };
+// 取得群組名稱與圖片（多人聊天室沒有名稱）
+async function getGroupSummary(groupId, accessToken) {
+  const res = await fetch(`https://api.line.me/v2/bot/group/${groupId}/summary`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return { name: "", pictureUrl: "" };
+  const g = await res.json();
+  return { name: g.groupName || "", pictureUrl: g.pictureUrl || "" };
+}
+
+module.exports = { verifySignature, verifyIdToken, reply, getProfile, getGroupSummary };

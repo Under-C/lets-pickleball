@@ -31,6 +31,7 @@ function eventBubble(ev, liffId, iconUrl) {
   const { main, wait } = splitEntries(ev);
   const cap = ev.capacity;
   const liffBase = `https://liff.line.me/${liffId}`;
+  const g = ev.groupId ? `&g=${encodeURIComponent(ev.groupId)}` : "";
 
   const dots = [];
   for (let i = 0; i < Math.min(cap, MAX_DOTS); i++) {
@@ -39,6 +40,7 @@ function eventBubble(ev, liffId, iconUrl) {
   if (cap > MAX_DOTS) dots.push(text(`+${cap - MAX_DOTS}`, { flex: 0, size: "sm", color: GRAY, gravity: "center", wrap: false }));
 
   const body = [
+    ...(ev.groupName ? [text(`👥 ${ev.groupName}`, { size: "xs", color: GRAY })] : []),
     text(`📍 ${ev.location}`, { weight: "bold", size: "md" }),
     text(`📅 ${fmtRange(ev.startAt.toMillis(), ev.endAt.toMillis())}`, { size: "sm", color: "#555555" }),
   ];
@@ -103,8 +105,8 @@ function eventBubble(ev, liffId, iconUrl) {
           layout: "horizontal",
           spacing: "sm",
           contents: [
-            btn("教學", { type: "uri", uri: `${liffBase}?view=help` }),
-            btn("📅 行事曆", { type: "uri", uri: `${liffBase}?view=calendar` }),
+            btn("教學", { type: "uri", uri: `${liffBase}?view=help${g}` }),
+            btn("📅 行事曆", { type: "uri", uri: `${liffBase}?view=calendar${g}` }),
           ],
         },
       ],

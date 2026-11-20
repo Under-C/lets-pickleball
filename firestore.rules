@@ -5,20 +5,35 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
-    function isAdmin() {
+    // 總管理員
+    function isSuper() {
       return signedIn()
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
+    // 是某群組的成員或群組管理員
+    function inGroup(gid) {
+      let g = get(/databases/$(database)/documents/groups/$(gid)).data;
+      return request.auth.uid in g.members || request.auth.uid in g.admins;
+    }
 
-    // 揪團：登入的人都可以讀；所有寫入都必須透過 Cloud Functions
-    match /events/{eventId} {
-      allow read: if signedIn();
+    // 群組：成員看得到自己的群組，總管理員看得到全部
+    match /groups/{gid} {
+      allow read: if signedIn() && (isSuper()
+        || request.auth.uid in resource.data.members
+        || request.auth.uid in resource.data.admins);
       allow write: if false;
     }
 
-    // 使用者：只能讀自己的資料，管理員可以讀全部；寫入一律透過 Cloud Functions
+    // 揪團：只有所屬群組的成員看得到（查詢時必須指定 groupId），總管理員看得到全部
+    match /events/{eventId} {
+      allow read: if signedIn() && (isSuper()
+        || (resource.data.groupId is string && inGroup(resource.data.groupId)));
+      allow write: if false;
+    }
+
+    // 使用者：只能讀自己的資料，總管理員可以讀全部
     match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow read: if signedIn() && (request.auth.uid == uid || isSuper());
       allow write: if false;
     }
   }

@@ -30,6 +30,14 @@ const S = {
   openEntries: new Set(),
   userQ: "",
   usersUnsub: null,
+  groups: [],            // 看得到的群組
+  selGroup: "all",       // 目前選擇的群組
+  dataMode: "",          // super = 讀全部；member = 只讀自己的群組
+  unsubs: [],            // 資料監聽（切換模式時取消）
+  eventsByGroup: {},     // 一般成員：每個群組各自的揪團
+  eventUnsubs: {},
+  memberGroup: "",       // 群組成員管理：目前選的群組
+  groupMembers: {},      // gid -> 成員清單
 };
 
 const $app = document.getElementById("app");
@@ -80,7 +88,14 @@ function statusText(m, w, cap) {
   if (w > 0) return `額滿囉，候補 ${w} 人排隊中`;
   return "額滿囉！剛剛好一場";
 }
-const isAdmin = () => S.me?.role === "admin";
+const isSuper = () => S.me?.role === "admin";
+const adminGroups = () => (isSuper() ? S.groups : S.groups.filter((g) => (g.admins || []).includes(S.uid)));
+const isAdmin = () => isSuper() || adminGroups().length > 0; // 可以進入管理頁
+const findGroup = (gid) => S.groups.find((g) => g.id === gid);
+const groupName = (gid) => findGroup(gid)?.name || "（未分組）";
+const isBlockedIn = (gid) => (findGroup(gid)?.blocked || []).includes(S.uid);
+const visibleEvents = () => (S.selGroup === "all" ? S.events : S.events.filter((e) => e.groupId === S.selGroup));
+const sortGroups = (list) => list.sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-Hant"));
 
 let toastTimer;
 function toast(msg) {
@@ -140,32 +155,87 @@ async function main() {
   S.loggedIn = true;
   S.uid = auth.currentUser.uid;
 
+  // 從群組字卡點進來（網址帶 g=群組ID）：加入該群組並預設選它
+  const url = new URL(location.href);
+  const linkG = url.searchParams.get("g");
+  if (linkG) {
+    try { await call("linkGroup", { groupId: linkG }); S.selGroup = linkG; } catch {}
+    url.searchParams.delete("g");
+    history.replaceState(null, "", url);
+  }
+
   onSnapshot(doc(db, "users", S.uid), (snap) => {
     S.me = snap.data() || null;
+    setupData();
     renderMe();
-    if (isAdmin() && !S.usersUnsub) {
-      S.usersUnsub = onSnapshot(collection(db, "users"), (s) => {
-        S.users = s.docs.map((d) => ({ id: d.id, ...d.data() }));
-        render();
-      });
-    }
     render();
   });
 
-  const q = query(
-    collection(db, "events"),
-    where("startAt", ">=", Timestamp.fromMillis(Date.now() - 120 * DAY)),
-    orderBy("startAt"),
-    limit(500)
-  );
-  onSnapshot(q, (snap) => {
-    S.events = snap.docs.map((d) => {
-      const x = d.data();
-      return { id: d.id, ...x, start: x.startAt.toMillis(), end: x.endAt.toMillis() };
-    });
-    render();
-  }, (err) => toast(`讀取揪團失敗：${err.message}`));
+  render();
+}
 
+const toEvent = (d) => {
+  const x = d.data();
+  return { id: d.id, ...x, start: x.startAt.toMillis(), end: x.endAt.toMillis() };
+};
+const sinceTs = () => Timestamp.fromMillis(Date.now() - 120 * DAY);
+
+// 依身分載入資料：總管理員讀全部；一般成員只讀自己所在群組
+function setupData() {
+  const mode = isSuper() ? "super" : "member";
+  if (S.dataMode === mode) return;
+  S.dataMode = mode;
+  S.unsubs.forEach((u) => u());
+  S.unsubs = [];
+  Object.values(S.eventUnsubs).forEach((u) => u());
+  S.eventUnsubs = {};
+  S.eventsByGroup = {};
+  S.events = [];
+  const onErr = (err) => toast(`讀取資料失敗：${err.message}`);
+
+  if (mode === "super") {
+    S.unsubs.push(onSnapshot(collection(db, "groups"), (snap) => {
+      S.groups = sortGroups(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      S.groupsLoaded = true;
+      renderMe();
+      render();
+    }, onErr));
+    S.unsubs.push(onSnapshot(
+      query(collection(db, "events"), where("startAt", ">=", sinceTs()), orderBy("startAt"), limit(1000)),
+      (snap) => { S.events = snap.docs.map(toEvent); render(); }, onErr));
+    S.unsubs.push(onSnapshot(collection(db, "users"), (snap) => {
+      S.users = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      render();
+    }, onErr));
+    return;
+  }
+
+  // 一般成員 / 群組管理員
+  S.unsubs.push(onSnapshot(
+    query(collection(db, "groups"), where("members", "array-contains", S.uid)),
+    (snap) => {
+      S.groups = sortGroups(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      S.groupsLoaded = true;
+      const ids = new Set(S.groups.map((g) => g.id));
+      // 新群組 → 開始監聽它的揪團；離開的群組 → 停止
+      for (const gid of ids) {
+        if (S.eventUnsubs[gid]) continue;
+        S.eventUnsubs[gid] = onSnapshot(
+          query(collection(db, "events"), where("groupId", "==", gid), where("startAt", ">=", sinceTs()), orderBy("startAt"), limit(300)),
+          (s) => { S.eventsByGroup[gid] = s.docs.map(toEvent); mergeEvents(); },
+          onErr);
+      }
+      for (const gid of Object.keys(S.eventUnsubs)) {
+        if (!ids.has(gid)) { S.eventUnsubs[gid](); delete S.eventUnsubs[gid]; delete S.eventsByGroup[gid]; }
+      }
+      if (S.selGroup !== "all" && !ids.has(S.selGroup)) S.selGroup = "all";
+      mergeEvents();
+      renderMe();
+    }, onErr));
+}
+
+function mergeEvents() {
+  S.events = Object.values(S.eventsByGroup).flat().sort((a, b) => a.start - b.start);
   render();
 }
 
@@ -196,17 +266,14 @@ async function firebaseLogin() {
 
 function renderMe() {
   if (!S.me) { $me.innerHTML = ""; return; }
-  const badges = [
-    isAdmin() ? `<span class="badge">管理員</span>` : "",
-    S.me.blocked ? `<span class="badge red">已停權</span>` : "",
-  ].join("");
+  const badges = isSuper() ? `<span class="badge">總管理員</span>` : isAdmin() ? `<span class="badge">群組管理員</span>` : "";
   $me.innerHTML = `${badges}<span>${esc(S.me.displayName)}</span>${S.me.pictureUrl ? `<img src="${esc(S.me.pictureUrl)}" alt="">` : ""}`;
   document.querySelector(".admin-only").classList.toggle("hidden", !isAdmin());
 }
 
 // ---------- 畫面 ----------
 function render() {
-  if (S.view === "admin" && S.loggedIn && S.me && !isAdmin()) S.view = "home";
+  if (S.view === "admin" && S.loggedIn && S.me && S.groupsLoaded && !isAdmin()) S.view = "home";
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === S.view));
 
   // 沒登入時，除了教學頁以外都顯示歡迎頁
@@ -219,11 +286,22 @@ function render() {
   UPDATE[view]?.();
 }
 
+// 群組切換列（只有一個群組時不顯示）
+function groupBar(list = S.groups) {
+  if (list.length < 2) return "";
+  const chip = (gid, label) => `<button class="small chip ${S.selGroup === gid ? "active" : ""}" data-act="selGroup" data-gid="${esc(gid)}">${esc(label)}</button>`;
+  return `<div class="chips">${chip("all", "全部群組")}${list.map((g) => chip(g.id, g.name)).join("")}</div>`;
+}
+function fillGroupBar(list) {
+  const el = document.getElementById("groupBar");
+  if (el) el.innerHTML = groupBar(list);
+}
+
 function eventCard(ev) {
   const { main, wait } = split(ev);
   const pos = myPos(ev);
   const now = Date.now();
-  const canJoin = !pos && ev.status === "open" && ev.start > now && !S.me?.blocked;
+  const canJoin = !pos && ev.status === "open" && ev.start > now && !isBlockedIn(ev.groupId);
   const canCancel = !!pos && ev.start > now;
   const maxDots = 24;
   const dots = Array.from({ length: Math.min(ev.capacity, maxDots) }, (_, i) => `<span class="dot ${i < main.length ? "on" : ""}"></span>`).join("")
@@ -237,6 +315,7 @@ function eventCard(ev) {
   <div class="card">
     <div class="card-head"><span class="ttl"><img class="pb-ico" src="pickleball.svg" alt="">${esc(ev.title || "匹克球揪團")}</span>${tag}</div>
     <div class="card-body">
+      ${S.groups.length > 1 ? `<div class="muted">👥 ${esc(groupName(ev.groupId))}</div>` : ""}
       <div class="loc">📍 ${esc(ev.location)}</div>
       <div>📅 ${fmtRange(ev.start, ev.end)}</div>
       ${ev.courts ? `<div>🏟️ 場地：${esc(ev.courts)}</div>` : ""}
@@ -279,7 +358,7 @@ const SHELL = {
     </div>`;
   },
   home() {
-    $app.innerHTML = `<h2>近期揪團</h2><div id="blockedNote"></div><div id="list" class="cards"></div>`;
+    $app.innerHTML = `<h2>近期揪團</h2><div id="groupBar"></div><div id="blockedNote"></div><div id="list" class="cards"></div>`;
   },
   calendar() {
     $app.innerHTML = `
@@ -288,12 +367,13 @@ const SHELL = {
         <h2 id="calTitle" style="margin:0"></h2>
         <button class="small" data-act="calNext">下個月 ›</button>
       </div>
+      <div id="groupBar"></div>
       <div id="calGrid" class="cal-grid"></div>
       <h3 id="calDayTitle"></h3>
       <div id="calList" class="cards"></div>`;
   },
   my() {
-    $app.innerHTML = `<h2>我的報名</h2><div id="myUp" class="cards"></div><h3>過去的揪團</h3><div id="myPast" class="list"></div>`;
+    $app.innerHTML = `<h2>我的報名</h2><div id="groupBar"></div><div id="myUp" class="cards"></div><h3>過去的揪團</h3><div id="myPast" class="list"></div>`;
   },
   help() {
     $app.innerHTML = `
@@ -308,6 +388,11 @@ const SHELL = {
           <li>由<b>你本人</b>按「確定報名／確定取消」才會生效，別人按無效（一人一位，幫朋友報名請他自己按）</li>
           <li>完成後 Bot 會回覆結果和這場最新的字卡</li>
         </ol>
+      </div>
+      <div class="panel">
+        <b>👥 群組</b>
+        <p>每個 LINE 群組的揪團分開管理，你只會看到自己所在群組的場次。</p>
+        <p>在群組裡發言、按字卡，或從群組字卡點進網站，就會自動加入該群組。</p>
       </div>
       <div class="panel">
         <b>🔒 已截止報名</b>
@@ -337,35 +422,54 @@ const SHELL = {
     $app.innerHTML = `
       <div class="tabs">
         <button data-act="tab" data-tab="events" class="${tab === "events" ? "active" : ""}">揪團管理</button>
-        <button data-act="tab" data-tab="users" class="${tab === "users" ? "active" : ""}">用戶管理</button>
+        <button data-act="tab" data-tab="members" class="${tab === "members" ? "active" : ""}">群組成員</button>
+        ${isSuper() ? `<button data-act="tab" data-tab="users" class="${tab === "users" ? "active" : ""}">總管理員</button>` : ""}
       </div>
       ${tab === "events"
-        ? `<button class="primary" style="width:100%;margin-bottom:12px" data-act="newEvent">＋ 新增揪團</button>
+        ? `<div id="groupBar"></div>
+           <button class="primary" style="width:100%;margin-bottom:12px" data-act="newEvent">＋ 新增揪團</button>
            <div id="formBox"></div>
            <h3>即將到來</h3><div id="upList" class="list"></div>
            <h3>已結束（近 120 天）</h3><div id="pastList" class="list"></div>`
-        : `<input id="userQ" placeholder="搜尋名稱…" value="${esc(S.userQ)}" style="margin-bottom:12px">
+        : tab === "members"
+        ? `<div class="panel form">
+             <label>選擇群組<select id="memberGroup"></select></label>
+             <div id="groupInfo"></div>
+           </div>
+           <input id="memberQ" placeholder="搜尋成員名稱…" value="${esc(S.userQ)}" style="margin-bottom:12px">
+           <div id="memberList" class="list"></div>`
+        : `<p class="muted">總管理員可以管理所有群組、指定群組管理員。</p>
+           <input id="userQ" placeholder="搜尋名稱…" value="${esc(S.userQ)}" style="margin-bottom:12px">
            <div id="userList" class="list"></div>`}`;
-    const q = document.getElementById("userQ");
-    if (q) q.addEventListener("input", () => { S.userQ = q.value; UPDATE.admin(); });
+    for (const id of ["userQ", "memberQ"]) {
+      const q = document.getElementById(id);
+      if (q) q.addEventListener("input", () => { S.userQ = q.value; UPDATE.admin(); });
+    }
+    const sel = document.getElementById("memberGroup");
+    if (sel) sel.addEventListener("change", () => { S.memberGroup = sel.value; loadMembers(true); });
   },
 };
 
 const UPDATE = {
   home() {
     const now = Date.now();
-    const list = S.events.filter((e) => e.start > now);
-    document.getElementById("blockedNote").innerHTML = S.me?.blocked
-      ? `<div class="panel" style="color:var(--red)">你的帳號已被管理員停權，暫時無法報名。</div>` : "";
-    document.getElementById("list").innerHTML = list.length
-      ? list.map(eventCard).join("")
-      : `<div class="empty">${MASCOT}目前沒有即將到來的揪團<br><span class="muted">敲敲主揪，或等下一場開團吧！</span></div>`;
+    fillGroupBar();
+    const list = visibleEvents().filter((e) => e.start > now);
+    const blockedIn = S.groups.filter((g) => (g.blocked || []).includes(S.uid)).map((g) => g.name);
+    document.getElementById("blockedNote").innerHTML = blockedIn.length
+      ? `<div class="panel" style="color:var(--red)">你已被「${esc(blockedIn.join("、"))}」的管理員停權，暫時無法在該群組報名。</div>` : "";
+    let empty = `${MASCOT}目前沒有即將到來的揪團<br><span class="muted">敲敲主揪，或等下一場開團吧！</span>`;
+    if (S.me && !S.groups.length) {
+      empty = `${MASCOT}你還沒有加入任何群組<br><span class="muted">在有「打球啦」的 LINE 群組裡輸入「揪團」，<br>或從群組的揪團字卡點進來，就會出現該群組的場次。</span>`;
+    }
+    document.getElementById("list").innerHTML = list.length ? list.map(eventCard).join("") : `<div class="empty">${empty}</div>`;
   },
   calendar() {
     const m = S.calMonth;
     document.getElementById("calTitle").textContent = `${m.getFullYear()} 年 ${m.getMonth() + 1} 月`;
+    fillGroupBar();
     const byDay = {};
-    for (const e of S.events) (byDay[dayKey(e.start)] ||= []).push(e);
+    for (const e of visibleEvents()) (byDay[dayKey(e.start)] ||= []).push(e);
 
     const first = new Date(m.getFullYear(), m.getMonth(), 1);
     const startDate = new Date(first);
@@ -390,7 +494,8 @@ const UPDATE = {
   },
   my() {
     const now = Date.now();
-    const mine = S.events.filter((e) => (e.entries || []).some((x) => x.uid === S.uid));
+    fillGroupBar();
+    const mine = visibleEvents().filter((e) => (e.entries || []).some((x) => x.uid === S.uid));
     const up = mine.filter((e) => e.end > now);
     const past = mine.filter((e) => e.end <= now).reverse();
     document.getElementById("myUp").innerHTML = up.length ? up.map(eventCard).join("") : `<div class="empty">${MASCOT}還沒有報名任何揪團</div>`;
@@ -405,15 +510,20 @@ const UPDATE = {
   admin() {
     if (!isAdmin()) return;
     if (S.adminTab === "events") updateAdminEvents();
-    else updateAdminUsers();
+    else if (S.adminTab === "members") updateAdminMembers();
+    else if (isSuper()) updateAdminUsers();
   },
 };
 
 // ---------- 管理後台：揪團 ----------
 function updateAdminEvents() {
   const now = Date.now();
-  const up = S.events.filter((e) => e.end > now);
-  const past = S.events.filter((e) => e.end <= now).reverse();
+  const mine = adminGroups();
+  fillGroupBar(mine);
+  const ids = new Set(mine.map((g) => g.id));
+  const manageable = visibleEvents().filter((e) => ids.has(e.groupId) || (isSuper() && !e.groupId));
+  const up = manageable.filter((e) => e.end > now);
+  const past = manageable.filter((e) => e.end <= now).reverse();
   const item = (e) => {
     const { main, wait } = split(e);
     const open = S.openEntries.has(e.id);
@@ -423,6 +533,7 @@ function updateAdminEvents() {
     const isOpen = e.status === "open";
     return `
     <div class="item">
+      ${mine.length > 1 || !e.groupId ? `<div class="muted">👥 ${esc(groupName(e.groupId))}</div>` : ""}
       <div class="top"><b>${esc(e.title || "匹克球揪團")}</b>${isOpen ? `<span class="badge" style="background:#e3f0e5;color:var(--green)">報名中</span>` : `<span class="badge red">🔒 已截止</span>`}</div>
       <div class="muted">${fmtRange(e.start, e.end)}｜${esc(e.location)}</div>
       <div>👥 正取 ${main.length}/${e.capacity}，候補 ${wait.length}${e.cancelLock24h ? "　⏰24h" : ""}</div>
@@ -484,10 +595,16 @@ function openForm(ev, { copy = false } = {}) {
   let end = base.end ?? start + 2 * 60 * 60 * 1000;
   if (copy) { start += 7 * DAY; end += 7 * DAY; }
   const id = copy ? "" : base.id || "";
+  const groups = adminGroups();
+  if (!groups.length) { toast("還沒有可以管理的群組，請先把「打球啦」加入 LINE 群組"); return; }
+  const defGroup = base.groupId || (S.selGroup !== "all" ? S.selGroup : groups[0].id);
   box.innerHTML = `
   <form id="evForm" class="panel form">
     <b>${id ? "編輯揪團" : copy ? "複製揪團（預設下週同一時間）" : "新增揪團"}</b>
     <input type="hidden" name="id" value="${esc(id)}">
+    <label>群組 *<select name="groupId" required>
+      ${groups.map((g) => `<option value="${esc(g.id)}" ${g.id === defGroup ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
+    </select></label>
     <label>標題（不填則為「匹克球揪團」）<input name="title" maxlength="40" value="${esc(base.title || "")}" placeholder="匹克球揪團"></label>
     <label>地點 *<input name="location" maxlength="60" required value="${esc(base.location || "")}" placeholder="鼓山運動中心"></label>
     <label>場地<input name="courts" maxlength="120" value="${esc(base.courts || "")}" placeholder="場02 18-19、場03 19-20"></label>
@@ -523,6 +640,7 @@ async function saveForm(e) {
   try {
     await call("adminSaveEvent", {
       id: f.get("id") || null,
+      groupId: f.get("groupId"),
       title: f.get("title"),
       location: f.get("location"),
       courts: f.get("courts"),
@@ -555,18 +673,80 @@ function updateAdminUsers() {
       <div class="user">
         ${u.pictureUrl ? `<img src="${esc(u.pictureUrl)}" alt="">` : `<div class="ph"></div>`}
         <div class="info"><b>${esc(u.displayName)}${self ? "（你）" : ""}</b><span class="muted">${seen}</span></div>
-        ${u.role === "admin" ? `<span class="badge" style="background:var(--light)">管理員</span>` : ""}
-        ${u.blocked ? `<span class="badge red">已封鎖</span>` : ""}
+        ${u.role === "admin" ? `<span class="badge">總管理員</span>` : ""}
       </div>
       ${self ? "" : `<div class="acts">
         <select data-act="setRole" data-uid="${esc(u.id)}" style="width:auto">
           <option value="user" ${u.role !== "admin" ? "selected" : ""}>一般用戶</option>
-          <option value="admin" ${u.role === "admin" ? "selected" : ""}>管理員</option>
+          <option value="admin" ${u.role === "admin" ? "selected" : ""}>總管理員</option>
         </select>
-        <button class="small ${u.blocked ? "" : "danger"}" data-act="toggleBlock" data-uid="${esc(u.id)}" data-blocked="${u.blocked ? 1 : 0}">${u.blocked ? "解除封鎖" : "封鎖"}</button>
       </div>`}
     </div>`;
   }).join("") : `<div class="empty">沒有符合的用戶</div>`;
+}
+
+// ---------- 管理後台：群組成員 ----------
+async function loadMembers(force = false) {
+  const gid = S.memberGroup;
+  if (!gid || (S.groupMembers[gid] && !force)) { UPDATE.admin(); return; }
+  if (!S.groupMembers[gid]) S.groupMembers[gid] = null; // 讀取中
+  UPDATE.admin();
+  try {
+    const r = await call("adminListGroupMembers", { groupId: gid });
+    S.groupMembers[gid] = r.members;
+  } catch (err) {
+    toast(`⚠️ ${err.message}`);
+    S.groupMembers[gid] = [];
+  }
+  UPDATE.admin();
+}
+
+function updateAdminMembers() {
+  const groups = adminGroups();
+  const sel = document.getElementById("memberGroup");
+  if (!groups.length) {
+    document.getElementById("memberList").innerHTML = `<div class="empty">還沒有可以管理的群組<br><span class="muted">把「打球啦」邀請進 LINE 群組後就會出現在這裡</span></div>`;
+    return;
+  }
+  if (!S.memberGroup || !groups.some((g) => g.id === S.memberGroup)) S.memberGroup = groups[0].id;
+  const opts = groups.map((g) => `<option value="${esc(g.id)}" ${g.id === S.memberGroup ? "selected" : ""}>${esc(g.name)}${g.active === false ? "（Bot 已離開）" : ""}</option>`).join("");
+  if (sel.innerHTML !== opts) sel.innerHTML = opts;
+
+  const g = findGroup(S.memberGroup);
+  const info = document.getElementById("groupInfo");
+  const infoHtml = isSuper()
+    ? `<div style="display:flex;gap:6px"><input id="groupNameInput" maxlength="30" value="${esc(g?.name || "")}" placeholder="群組顯示名稱"><button type="button" class="small primary" data-act="renameGroup" style="white-space:nowrap">改名</button></div>
+       <p class="muted">LINE 群組名稱：${esc(g?.lineName || "（無）")}｜成員 ${(g?.members || []).length} 人</p>`
+    : `<p class="muted">成員 ${(g?.members || []).length} 人</p>`;
+  if (info.dataset.gid !== S.memberGroup || !document.getElementById("groupNameInput") && isSuper()) {
+    info.innerHTML = infoHtml;
+    info.dataset.gid = S.memberGroup;
+  }
+
+  const list = S.groupMembers[S.memberGroup];
+  const box = document.getElementById("memberList");
+  if (list === undefined) { loadMembers(); return; }
+  if (list === null) { box.innerHTML = `<div class="loading">讀取成員中…</div>`; return; }
+  const q = S.userQ.trim().toLowerCase();
+  const rows = list
+    .filter((m) => !q || m.name.toLowerCase().includes(q))
+    .sort((a, b) => (b.isGroupAdmin - a.isGroupAdmin) || (a.blocked - b.blocked) || a.name.localeCompare(b.name, "zh-Hant"));
+  box.innerHTML = rows.length ? rows.map((m) => {
+    const self = m.uid === S.uid;
+    return `
+    <div class="item">
+      <div class="user">
+        ${m.pictureUrl ? `<img src="${esc(m.pictureUrl)}" alt="">` : `<div class="ph"></div>`}
+        <div class="info"><b>${esc(m.name)}${self ? "（你）" : ""}</b>${m.inGroup ? "" : `<span class="muted">已不在群組</span>`}</div>
+        ${m.isSuper ? `<span class="badge">總管理員</span>` : m.isGroupAdmin ? `<span class="badge">群組管理員</span>` : ""}
+        ${m.blocked ? `<span class="badge red">已封鎖</span>` : ""}
+      </div>
+      ${self || m.isSuper ? "" : `<div class="acts">
+        ${isSuper() ? `<button class="small ${m.isGroupAdmin ? "" : "primary"}" data-act="toggleGroupAdmin" data-uid="${esc(m.uid)}" data-on="${m.isGroupAdmin ? 1 : 0}">${m.isGroupAdmin ? "取消群組管理員" : "設為群組管理員"}</button>` : ""}
+        <button class="small ${m.blocked ? "" : "danger"}" data-act="toggleGroupBlock" data-uid="${esc(m.uid)}" data-on="${m.blocked ? 1 : 0}" data-name="${esc(m.name)}">${m.blocked ? "解除封鎖" : "封鎖"}</button>
+      </div>`}
+    </div>`;
+  }).join("") : `<div class="empty">還沒有成員<br><span class="muted">成員在群組裡發言或按字卡後就會出現</span></div>`;
 }
 
 // ---------- 按鈕事件 ----------
@@ -640,10 +820,29 @@ $app.addEventListener("click", async (e) => {
         toast(r.promoted ? `已移除，${r.promoted} 遞補為正取` : "已移除");
       });
       break;
-    case "toggleBlock": {
-      const blocked = el.dataset.blocked !== "1";
-      if (blocked && !confirm("封鎖後這位用戶將無法報名，確定嗎？")) return;
-      await busy(async () => { await call("adminSetUser", { uid: el.dataset.uid, blocked }); toast(blocked ? "已封鎖" : "已解除封鎖"); });
+    case "selGroup": S.selGroup = el.dataset.gid; render(); break;
+    case "toggleGroupBlock": {
+      const blocked = el.dataset.on !== "1";
+      if (blocked && !confirm(`封鎖後「${el.dataset.name}」將無法在「${groupName(S.memberGroup)}」報名，確定嗎？`)) return;
+      await busy(async () => {
+        await call("adminSetGroupMember", { groupId: S.memberGroup, uid: el.dataset.uid, blocked });
+        toast(blocked ? "已封鎖" : "已解除封鎖");
+        await loadMembers(true);
+      });
+      break;
+    }
+    case "toggleGroupAdmin": {
+      const on = el.dataset.on !== "1";
+      await busy(async () => {
+        await call("adminSetGroupMember", { groupId: S.memberGroup, uid: el.dataset.uid, isGroupAdmin: on });
+        toast(on ? "已設為群組管理員" : "已取消群組管理員");
+        await loadMembers(true);
+      });
+      break;
+    }
+    case "renameGroup": {
+      const name = document.getElementById("groupNameInput").value.trim();
+      await busy(async () => { await call("adminRenameGroup", { groupId: S.memberGroup, name }); toast("已更新群組名稱"); });
       break;
     }
   }
