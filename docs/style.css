@@ -22,7 +22,7 @@
 
 body {
   margin: 0;
-  font-family: "M PLUS Rounded 1c", "Nunito", -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  font-family: "Huninn", "M PLUS Rounded 1c", "Nunito", -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
   background: var(--bg);
   background-image: radial-gradient(rgba(255, 212, 59, .25) 1.5px, transparent 1.5px);
   background-size: 22px 22px;
