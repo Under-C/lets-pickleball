@@ -45,25 +45,25 @@ const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
 const $me = document.getElementById("me");
 
-// 原創吉祥物：拿著球拍的笑臉匹克球
-const MASCOT = `<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  <g transform="translate(98 36) rotate(28)">
-    <rect x="-4.5" y="10" width="9" height="24" rx="4" fill="#F2B705" stroke="#C99400" stroke-width="2"/>
-    <rect x="-14" y="-27" width="28" height="37" rx="11" fill="#2F5D8C" stroke="#1F4268" stroke-width="3"/>
-    <rect x="-9" y="-22" width="7" height="15" rx="3.5" fill="#fff" opacity=".28"/>
-  </g>
-  <path d="M84 66 Q94 60 96 52" stroke="#8FB02E" stroke-width="6" fill="none" stroke-linecap="round"/>
-  <circle cx="52" cy="66" r="40" fill="#C9E84F" stroke="#8FB02E" stroke-width="3"/>
-  <g fill="#A9C93C">
-    <circle cx="34" cy="38" r="4"/><circle cx="54" cy="32" r="4"/><circle cx="72" cy="42" r="4"/>
-    <circle cx="22" cy="58" r="3.5"/><circle cx="84" cy="78" r="3.5"/><circle cx="30" cy="92" r="4"/>
-    <circle cx="52" cy="98" r="4"/><circle cx="72" cy="94" r="3.5"/>
-  </g>
-  <ellipse cx="41" cy="62" rx="4.5" ry="5.5" fill="#2B2B2B"/><ellipse cx="63" cy="62" rx="4.5" ry="5.5" fill="#2B2B2B"/>
-  <circle cx="42.5" cy="60" r="1.6" fill="#fff"/><circle cx="64.5" cy="60" r="1.6" fill="#fff"/>
-  <ellipse cx="32" cy="74" rx="6" ry="3.5" fill="#FF8FA3" opacity=".6"/><ellipse cx="72" cy="74" rx="6" ry="3.5" fill="#FF8FA3" opacity=".6"/>
-  <path d="M42 74 Q52 84 62 74" stroke="#2B2B2B" stroke-width="3" fill="none" stroke-linecap="round"/>
-</svg>`;
+// 吉祥物（帽子小人）與匹克球拍圖示
+const MASCOT = `<img class="mascot" src="player.png" alt="">`;
+const PADDLE = `<img class="pb-ico" src="paddle.png" alt="">`;
+
+// 深藍線條圖示（顏色跟著文字顏色）
+const ICON_PATHS = {
+  pin: `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 21s-6.5-5.6-6.5-10.5a6.5 6.5 0 1 1 13 0C18.5 15.4 12 21 12 21z"/><circle fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" cx="12" cy="10.5" r="2.3"/>`,
+  calendar: `<rect fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 10h17M8 3v4M16 3v4"/>`,
+  court: `<rect fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" x="3.5" y="5.5" width="17" height="13" rx="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 5.5v13M3.5 12h3M17.5 12h3"/>`,
+  people: `<circle fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" cx="9" cy="8.5" r="3"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 19.5c0-3.2 2.5-5.5 5.5-5.5s5.5 2.3 5.5 5.5"/><circle fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" cx="16.5" cy="9" r="2.4"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M16 14.2c2.7.2 4.5 2.3 4.5 5.3"/>`,
+  note: `<rect fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" x="5" y="3.5" width="14" height="17" rx="2.5"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8.5 9h7M8.5 13h7M8.5 17h4"/>`,
+  clock: `<circle fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" cx="12" cy="12.5" r="8"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 8.5v4.5l3 2"/>`,
+  user: `<circle fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" cx="12" cy="8.5" r="3.8"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4.5 20.5c0-4 3.4-6.8 7.5-6.8s7.5 2.8 7.5 6.8"/>`,
+  book: `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 6.5C10 5 7 4.5 3.5 5v13.5c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5C17 4.5 14 5 12 6.5zM12 6.5V20"/>`,
+  tools: `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.5 6.5a4 4 0 0 0 5 5L12 19a2.1 2.1 0 0 1-3-3l7.5-7.5zM4 4l5 5M3.5 7.5l2-2"/>`,
+};
+const ic = (name, size = 18) =>
+  `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
+
 document.querySelector(".brand").innerHTML = `${MASCOT}<span>打球啦</span>`;
 
 // ---------- 小工具 ----------
@@ -371,33 +371,33 @@ function eventCard(ev) {
   const dots = Array.from({ length: Math.min(ev.capacity, maxDots) }, (_, i) => `<span class="dot ${i < main.length ? "on" : ""}"></span>`).join("")
     + (ev.capacity > maxDots ? `<span class="muted">+${ev.capacity - maxDots}</span>` : "");
   const mine = pos
-    ? `<span class="mine ${pos.type === "wait" ? "wait" : ""}">${pos.type === "main" ? `✅ 你是正取第 ${pos.n} 位` : `⏳ 你在候補第 ${pos.n} 位`}</span>`
+    ? `<span class="mine ${pos.type === "wait" ? "wait" : ""}">${pos.type === "main" ? `你是正取第 ${pos.n} 位` : `你在候補第 ${pos.n} 位`}</span>`
     : "";
-  const tag = ev.status !== "open" ? `<span class="badge">🔒 已截止報名</span>` : ev.start <= now ? `<span class="badge">已開始</span>` : "";
+  const tag = ev.status !== "open" ? `<span class="badge">已截止報名</span>` : ev.start <= now ? `<span class="badge">已開始</span>` : "";
 
   return `
   <div class="card">
     <div class="card-head">
-      <div class="head-row"><span class="ttl"><img class="pb-ico" src="pickleball.svg" alt="">${esc(ev.title || "匹克球揪團")}</span>${tag}</div>
-      <div class="card-group">👥 ${esc(groupName(ev.groupId))}</div>
+      <div class="head-row"><span class="ttl">${PADDLE}${esc(ev.title || "匹克球揪團")}</span>${tag}</div>
+      <div class="card-group">${ic("people", 15)}${esc(groupName(ev.groupId))}</div>
     </div>
     <div class="card-body">
-      <div class="loc">📍 ${esc(ev.location)}</div>
-      <div>📅 ${fmtRange(ev.start, ev.end)}</div>
-      ${ev.courts ? `<div>🏟️ 場地：${esc(ev.courts)}</div>` : ""}
+      <div class="row loc">${ic("pin", 20)}<b>${esc(ev.location)}</b></div>
+      <div class="row">${ic("calendar")}<span>${fmtRange(ev.start, ev.end)}</span></div>
+      ${ev.courts ? `<div class="row">${ic("court")}<span>場地：${esc(ev.courts)}</span></div>` : ""}
       <div class="dots">${dots}</div>
-      <div class="count">👥 ${main.length}/${ev.capacity}<small>候補 ${wait.length}</small></div>
+      <div class="row count">${ic("people", 20)}<b>${main.length}/${ev.capacity}</b><small>候補 ${wait.length}</small></div>
       <div class="status">${statusText(main.length, wait.length, ev.capacity)}</div>
       ${main.length ? `<div class="names">正取：${main.map((e) => esc(e.name)).join("、")}</div>` : ""}
       ${wait.length ? `<div class="names wait">候補：${wait.map((e) => esc(e.name)).join("、")}</div>` : ""}
-      ${ev.note ? `<div>📝 ${esc(ev.note)}</div>` : ""}
-      ${ev.cancelLock24h ? `<div class="muted">⏰ 開打前 24 小時內不可取消正取</div>` : ""}
+      ${ev.note ? `<div class="row">${ic("note")}<span>${esc(ev.note)}</span></div>` : ""}
+      ${ev.cancelLock24h ? `<div class="row lock">${ic("clock", 16)}<span>開打前 24 小時內不可取消正取</span></div>` : ""}
       ${mine ? `<div>${mine}</div>` : ""}
     </div>
     <div class="card-foot">
       <button data-act="cancel" data-id="${ev.id}" ${canCancel ? "" : "disabled"}>取消 -1</button>
-      <button class="primary" data-act="join" data-id="${ev.id}" ${canJoin ? "" : "disabled"}>報名 +1</button>
-      ${pos && ev.end > now ? `<button class="gcal" data-act="gcal" data-id="${ev.id}">📅 加入 Google 日曆</button>` : ""}
+      <button class="join" data-act="join" data-id="${ev.id}" ${canJoin ? "" : "disabled"}>報名 +1</button>
+      ${pos && ev.end > now ? `<button class="gcal" data-act="gcal" data-id="${ev.id}">${ic("calendar", 16)}加入 Google 日曆</button>` : ""}
     </div>
   </div>`;
 }
@@ -412,12 +412,12 @@ const SHELL = {
         <p class="muted">一起打球吧！看看最近有哪些場次可以報名</p>
       </div>
       <div class="panel">
-        <b>🔒 這是社團內部頁面</b>
+        <b class="row">${ic("user")}這是社團內部頁面</b>
         <p class="muted">場次、場地與名單需要用 LINE 登入後才會顯示。</p>
         <button class="primary" style="width:100%" data-act="login">用 LINE 登入</button>
       </div>
       <div class="panel">
-        <b>👥 怎麼報名？</b>
+        <b class="row">${ic("people")}怎麼報名？</b>
         <p>點場次卡片的「報名 +1」就完成！<br>一人一位，朋友想來請他自己按。<br>額滿會自動排候補，有人取消就遞補你。</p>
         <button class="small" data-act="goHelp">看完整教學 →</button>
       </div>
@@ -446,7 +446,7 @@ const SHELL = {
   help() {
     $app.innerHTML = `
     <div class="help">
-      <h2>📖 使用教學</h2>
+      <h2 class="row">${ic("book", 22)}使用教學</h2>
       <div class="panel">
         <b>在 LINE 群組報名</b>
         <ol>
@@ -458,12 +458,12 @@ const SHELL = {
         </ol>
       </div>
       <div class="panel">
-        <b>👥 群組</b>
+        <b class="row">${ic("people")}群組</b>
         <p>每個 LINE 群組的揪團分開管理，你只會看到自己所在群組的場次。</p>
         <p>在群組裡發言、按字卡，或從群組字卡點進網站，就會自動加入該群組。</p>
       </div>
       <div class="panel">
-        <b>🔒 已截止報名</b>
+        <b class="row">${ic("clock")}已截止報名</b>
         <p>管理員關閉報名的場次，一般用戶無法自行報名，需要請管理員幫忙加入名單。</p>
       </div>
       <div class="panel">
@@ -473,11 +473,11 @@ const SHELL = {
       </div>
       <div class="panel">
         <b>取消規則</b>
-        <p>有標示「⏰ 開打前 24 小時內不可取消正取」的場次，開打前 24 小時內無法自行取消正取，請聯繫管理員。</p>
+        <p>有標示「開打前 24 小時內不可取消正取」的場次，開打前 24 小時內無法自行取消正取，請聯繫管理員。</p>
         <p>候補的人隨時都可以取消。</p>
       </div>
       <div class="panel">
-        <b>📝 用指令開團（有開團權限的人）</b>
+        <b class="row">${ic("note")}用指令開團（有開團權限的人）</b>
         <p>私訊「打球啦」傳送下面格式，Bot 會先回覆預覽，確認後才會開團；有多個群組時可以選要開在哪一群。在群組裡傳送則直接開在該群組。</p>
         <pre class="cmd">開團 週五夜打
 -11/26（四）19:00-22:00
@@ -489,9 +489,9 @@ const SHELL = {
       </div>
       <div class="panel">
         <b>網站功能</b>
-        <p><img class="pb-ico" src="pickleball.svg" alt="">揪團：查看並報名近期場次</p>
-        <p>📅 行事曆：用月曆查看所有場次</p>
-        <p>🙋 我的：查看自己報名的場次與正取／候補狀態</p>
+        <p class="row">${PADDLE}揪團：查看並報名近期場次</p>
+        <p class="row">${ic("calendar")}行事曆：用月曆查看所有群組的場次</p>
+        <p class="row">${ic("user")}我的：查看自己報名的場次與正取／候補狀態</p>
       </div>
       ${S.loggedIn ? "" : `<button class="primary" style="width:100%" data-act="login">用 LINE 登入</button>`}
     </div>`;
@@ -626,15 +626,15 @@ function updateAdminEvents() {
     const isOpen = e.status === "open";
     return `
     <div class="item">
-      ${mine.length > 1 || !e.groupId ? `<div class="muted">👥 ${esc(groupName(e.groupId))}</div>` : ""}
-      <div class="top"><b>${esc(e.title || "匹克球揪團")}</b>${isOpen ? `<span class="badge" style="background:#e3f0e5;color:var(--green)">報名中</span>` : `<span class="badge red">🔒 已截止</span>`}</div>
+      ${mine.length > 1 || !e.groupId ? `<div class="muted row">${ic("people", 15)}${esc(groupName(e.groupId))}</div>` : ""}
+      <div class="top"><b>${esc(e.title || "匹克球揪團")}</b>${isOpen ? `<span class="badge open">報名中</span>` : `<span class="badge closed">已截止</span>`}</div>
       <div class="muted">${fmtRange(e.start, e.end)}｜${esc(e.location)}${e.createdBy === S.uid ? "｜你開的團" : ""}</div>
-      <div>👥 正取 ${main.length}/${e.capacity}，候補 ${wait.length}${e.cancelLock24h ? "　⏰24h" : ""}</div>
+      <div class="row">${ic("people", 16)}<span>正取 ${main.length}/${e.capacity}，候補 ${wait.length}${e.cancelLock24h ? "｜24 小時內不可取消" : ""}</span></div>
       <div class="acts">
         <button class="small" data-act="editEvent" data-id="${e.id}">編輯</button>
         ${permsIn(findGroup(e.groupId)).create ? `<button class="small" data-act="copyEvent" data-id="${e.id}">複製</button>` : ""}
         <button class="small" data-act="toggleEntries" data-id="${e.id}">${open ? "收起名單" : `名單 (${(e.entries || []).length})`}</button>
-        <button class="small ${isOpen ? "" : "primary"}" data-act="toggleStatus" data-id="${e.id}">${isOpen ? "🔒 關閉報名" : "🔓 開放報名"}</button>
+        <button class="small ${isOpen ? "" : "primary"}" data-act="toggleStatus" data-id="${e.id}">${isOpen ? "關閉報名" : "開放報名"}</button>
         <button class="small danger" data-act="deleteEvent" data-id="${e.id}">刪除揪團</button>
       </div>
       ${open ? `<div>

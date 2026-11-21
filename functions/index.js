@@ -384,7 +384,7 @@ function chatGroupId(source) {
 async function handleLineEvent(ev) {
   const token = LINE_CHANNEL_ACCESS_TOKEN.value();
   const liffId = LIFF_ID.value();
-  const iconUrl = `${SITE_URL.value().replace(/\/$/, "")}/pickleball.png`;
+  const iconUrl = siteIcon();
   const gid = chatGroupId(ev.source);
   const userId = ev.source && ev.source.userId;
   const sayText = (t) => line.reply(ev.replyToken, { type: "text", text: t }, token);
@@ -529,6 +529,11 @@ async function handleLineEvent(ev) {
   }
 }
 
+// 字卡標題的匹克球拍圖示（其他線條圖示放在同一個網站的 icons/ 底下）
+function siteIcon() {
+  return `${SITE_URL.value().replace(/\/$/, "")}/paddle.png`;
+}
+
 // ---------- 開團指令 ----------
 
 // 這個人可以開團的群組（在群組內傳指令 = 只看這個群組）
@@ -577,7 +582,7 @@ async function handleCreateCommand(ev, msg, gid, group, userId, sayText) {
     createdAt: FieldValue.serverTimestamp(),
     expiresAt: Timestamp.fromMillis(Date.now() + 24 * 3600e3),
   });
-  await line.reply(ev.replyToken, createPreviewMessage(parsed.data, groups, draft.id), token);
+  await line.reply(ev.replyToken, createPreviewMessage(parsed.data, groups, draft.id, siteIcon()), token);
 }
 
 async function handleDraft(ev, params, userId, sayText, liffId, iconUrl, token) {
